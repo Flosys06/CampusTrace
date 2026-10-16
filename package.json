@@ -1,0 +1,23 @@
+{
+  "name": "campustrace-root",
+  "version": "1.0.0",
+  "description": "CampusTrace AI-Powered Lost & Found Management System",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "dev:backend": "python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --app-dir backend",
+    "backend": "python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --app-dir backend",
+    "build": "npm --prefix frontend run build",
+    "preview": "npm --prefix frontend run preview",
+    "lint": "npm --prefix frontend run lint",
+    "seed": "python backend/seed.py"
+  },
+  "keywords": [
+    "campustrace",
+    "lost-and-found",
+    "computer-vision",
+    "ai",
+    "mobile-first"
+  ],
+  "author": "",
+  "license": "ISC"
+}
