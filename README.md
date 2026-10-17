@@ -1,102 +1,207 @@
-# CampusTrace: AI-Powered Lost & Found Management Platform
+# CampusTrace: Enterprise AI-Powered Campus Lost & Found Platform
 
-CampusTrace is an enterprise-grade full-stack **Lost & Found Management System** engineered for universities and educational institutions. It pairs real-time **Computer Vision feature extraction** (512-dimensional multi-scale spatial color histograms and Sobel gradient descriptors) with an auditable, unbroken **Chain of Custody** protocol.
+CampusTrace is an institutional **Lost & Found Management Platform** engineered for universities and educational institutions. It pairs **cloud object detection via API Ninjas**, an on-device neural vision fallback, and an unbroken, auditable **Chain of Custody** protocol designed around faculty custodians and campus storage vaults.
 
 ---
 
-## 1. System Architecture
+## 1. System Architecture & Workflows
 
 ```mermaid
 graph TD
-    Student[Student User] -->|1. Submit Lost Report + Photo| Frontend[React + Vite Frontend]
-    Finder[Student Finder] -->|2. Physically hand over found item| Teacher[Teacher / Staff Custodian]
-    Teacher -->|3. Register Found Item + Assign Vault| Frontend
+    %% Users
+    Student[Student User]
+    Finder[Student Finder]
+    Teacher[Teacher / Faculty Custodian]
 
-    Frontend -->|REST API + JWT Bearer| FastAPI[FastAPI Backend Server]
-    FastAPI -->|Extract 512-dim Vector| Vision[OpenCV Vision Extractor]
-    FastAPI -->|Compute Composite Similarity| MatchEngine[AI Matching Engine]
-    FastAPI -->|Store Metadata & Custody Records| DB[(SQLite / PostgreSQL)]
-    FastAPI -->|Normalize & Save Safe Images| FileStore[File Storage Engine]
+    %% Lost Workflow
+    Student -->|"1. Upload Photo from Gallery (Find by Photo)"| ScanEngine["Photo Scan & Match Engine"]
+    ScanEngine -->|"API Ninjas Object Detection"| CloudAI["API Ninjas AI (/v1/objectdetection)"]
+    CloudAI -->|"Detected Label, Category & Dominant Color"| MatchScorer["Campus Custody Match Scorer"]
+    MatchScorer -->|"Match Found in Custody (>= 70%)"| ShowCustodian["Display Item & Custodian Teacher"]
+    ShowCustodian -->|"1-Click Alert"| TeacherAlert["Instant Notification to Teacher"]
+    MatchScorer -->|"No Open Matches"| QuickLost["1-Click Issue Lost Report with Photo"]
 
-    MatchEngine -->|Suggested Match >= 45%| Notification[In-App Notifications]
-    Student -->|4. Inspect Match & Submit Private Evidence| Claims[Ownership Claims]
-    Teacher -->|5. Verify Evidence & Approve Claim| Claims
-    Teacher -->|6. In-Person ID Check & Handover| Returns[Return Verification Record]
+    %% Found Workflow
+    Finder -->|"2. Photograph Found Belonging"| IntakeModal["Found Item Intake Modal"]
+    IntakeModal -->|"Auto-Detect & Autofill"| CloudAI
+    IntakeModal -->|"Mandatory Custody Record"| TeacherHandover["Teacher / Staff Handed To *"]
+    TeacherHandover -->|"3. Physical Custody Intake"| Teacher
+    Teacher -->|"Assign to Storage Vault"| Vault["Campus Storage Locker / Vault"]
+
+    %% Backend & Claims
+    IntakeModal -->|"Register Report"| FastAPI["FastAPI Backend Server"]
+    FastAPI -->|"Persist Metadata & Logs"| DB[("SQLite / PostgreSQL Database")]
+    Student -->|"4. Submit Ownership Claim + Evidence"| Claims["Ownership Claims Engine"]
+    Teacher -->|"5. Review Evidence & Approve Claim"| Claims
+    Teacher -->|"6. In-Person ID Verification & Handover"| ReturnRecord["Verified Return Audit Record"]
 ```
 
 ---
 
-## 2. Key Features & Workflows
+## 2. Core Functional Modules
 
-### Role-Based Access Control (RBAC)
-- **Student (`STUDENT`)**:
-  - Report lost belongings with photo uploads.
-  - Browse campus found item listings.
-  - View AI potential match recommendations.
-  - Submit ownership claims with protected confidential evidence.
-  - Track in-app notifications.
-  - *Restricted*: Cannot approve claims, modify custody records, or mark items as returned.
-- **Teacher / Faculty (`TEACHER`)**:
-  - Confirm physical intake of items handed over by students.
-  - Secure items in campus vault lockers and cabinets.
-  - Transfer custody between staff members with timestamped logs.
-  - Review and approve/reject claims.
-  - Verify student collector identity in person and execute returns.
-- **Administrator (`ADMIN`)**:
-  - View campus recovery rate percentage and average resolution days.
-  - Append-only security audit log of all sensitive events.
-  - Monitor computer vision model health and feature dimensions.
-  - Manage user directory and storage locations.
+### A. "Find by Photo" (Private Scan & Match)
+Designed around how students actually lose items—they cannot take a photo of an item they already lost, but often have pictures of their belongings in their phone gallery:
+1. **Private Gallery Upload**: Students upload a photo of their belonging from their phone or computer.
+2. **Automated Feature Extraction**: API Ninjas detects the object (`bottle`, `backpack`, `laptop`, `phone`, `keys`, `wallet`, etc.), extracts dominant colors, and maps them to institutional categories.
+3. **Campus Custody Matching**: Evaluates the image against all **active, open found items** currently reported across campus.
+4. **Custodian Routing**: If a matching item is already in campus custody, the student is shown the custodian teacher's name and location, with a **1-click Custodian Alert** to notify the teacher without revealing private data.
+5. **Seamless Report Issuance**: If no matches exist, the student can convert their uploaded photo directly into an official Lost Report in one click.
 
-### Computer Vision AI Matching Pipeline
-- Extracts a **512-dimensional L2-normalized feature vector**:
-  - 128 dimensions: Global HSV Color Histograms
-  - 144 dimensions: 3x3 Spatial Grid Color Pyramids
-  - 16 dimensions: Global Sobel Gradient Orientation Distribution
-  - 144 dimensions: Spatial Edge & Texture Magnitude Pyramids
-  - 80 dimensions: High-frequency Laplacian variance, edge density, and statistics
-- Computes **multimodal composite similarity**:
-  $$\text{Composite Score} = 0.60 \times \text{Cosine}(V_{\text{lost}}, V_{\text{found}}) + 0.40 \times \text{Metadata Score}$$
-- Signals include: Category match (0.40), Color match (0.25), Temporal proximity (0.20), Location proximity (0.15).
+### B. "Found an item? Report it." (Traceable Custody Intake)
+1. **Clean Intake Dialog**: Mounted in a high-priority portal (`createPortal`) with drag-and-drop, gallery upload, and an optional live webcam toggle.
+2. **Instant Object Auto-Fill**: Automatically fills Title, Category, Color, and Circumstances based on the uploaded image.
+3. **Prime Feature — Teacher / Staff Handed To**:
+   - Marking physical custody is mandatory (`required *`) when reporting found items.
+   - Requires recording the professor, lab incharge, or department desk who received physical custody.
+4. **Storage Vault Allocation**: Authorized faculty and administrators assign items to designated campus storage vaults (e.g., *Physics Lab Locker*, *CS Dept Cabinet*).
+
+### C. Ownership Claims & Verification
+1. **Confidential Evidence**: Students claim items by providing non-public details (lock screen wallpaper, serial numbers, specific scratches, unique keychain marks).
+2. **Faculty Verification**: Teachers review claims, inspect submitted evidence, and approve or reject claims.
+3. **In-Person Handover Audit**: The physical handover is verified against the student's institutional ID card, creating an append-only return record.
 
 ---
 
-## 3. Pre-Seeded Institutional Demo Accounts
+## 3. Technology Stack
+
+| Layer | Technologies & Frameworks |
+|---|---|
+| **Frontend** | React 19, TypeScript, Vite, Tailwind CSS v4, Lucide Icons, React Router v7 |
+| **Backend** | FastAPI, Python 3.11+, SQLAlchemy 2.0 ORM, Pydantic v2 schemas, SQLite / PostgreSQL |
+| **AI & Vision** | **API Ninjas Object Detection API**, OpenCV 512-dim color-spatial descriptor vector, ONNX WebAssembly Runtime (MobileNetV2 fallback) |
+| **Authentication** | JWT Bearer Authentication, Password Hashing (Passlib / PBKDF2), Role-Based Access Control |
+| **UI Components** | Symmetrical Dual Hero Cards (Indigo/Purple Scan & Emerald/Teal Intake), Glassmorphism, Responsive Mobile Bottom Navigation & Desktop Navbar |
+
+---
+
+## 4. Role-Based Access Control (RBAC)
+
+| Capability | Student (`STUDENT`) | Faculty Custodian (`TEACHER`) | Campus Administrator (`ADMIN`) |
+|---|:---:|:---:|:---:|
+| Find by Photo (Private Scan) | Yes | Yes | Yes |
+| Report Lost / Found Belongings | Yes | Yes | Yes |
+| Enter "Teacher Handed To" Record | Yes (Required) | Yes | Yes |
+| View Campus Feed & Listings | Yes | Yes | Yes |
+| Submit Ownership Claim | Yes | No | No |
+| Faculty Custody Queue (`/custody`) | Restricted | Yes | Yes |
+| Assign Storage Vaults | Restricted | Yes | Yes |
+| Transfer Custody Between Staff | Restricted | Yes | Yes |
+| Approve / Reject Ownership Claims | Restricted | Yes | Yes |
+| Perform In-Person Return Handover | Restricted | Yes | Yes |
+| Campus Audit Logs & Oversight | Restricted | Restricted | Yes |
+
+---
+
+## 5. API Ninjas Configuration
+
+CampusTrace utilizes the **API Ninjas Object Detection API** (`https://api.api-ninjas.com/v1/objectdetection`) to identify items, determine categories, and extract visual attributes.
+
+### Environment Variable Setup
+1. Create or edit `backend/.env`:
+   ```env
+   # API Ninjas Configuration
+   API_NINJAS_API_KEY=your_actual_api_ninjas_key_here
+   ```
+2. A template is provided in `backend/.env.example`:
+   ```env
+   API_NINJAS_API_KEY=PASTE_YOUR_API_KEY_HERE
+   ```
+3. *Security Note*: The API key is stored strictly on the server and is never exposed to browser requests, client bundles, or frontend environment variables.
+
+---
+
+## 6. Key API Endpoints
+
+### AI Detection & Photo Matching
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/detection/scan-and-match` | Scans a gallery photo against open campus reports, returning high-confidence candidates and custodian teacher info |
+| `POST` | `/api/detection/detect-object` | Runs object detection on an image, returning label, confidence, dominant color, and category |
+| `POST` | `/api/detection/alert-custodian` | Sends an in-app notification to the teacher holding a matched item |
+| `GET` | `/api/detection/status` | Returns the configuration status of the AI detection service |
+
+### Reports & Feed
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/reports` | Paginated campus feed with search, category, location, and status filters |
+| `POST` | `/api/reports` | Create lost or found report (supports `handed_over_teacher_name`) |
+| `GET` | `/api/reports/{id}` | Retrieve comprehensive report details, images, and custody history |
+| `PATCH` | `/api/reports/{id}` | Update report details or change status |
+
+### Custody & Returns
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/custody/queue` | Active faculty custody queue of items in campus storage vaults |
+| `POST` | `/api/custody/intake` | Confirm physical intake of an item surrendered by a student |
+| `POST` | `/api/custody/transfer` | Transfer physical custody between faculty members with timestamped logs |
+| `GET` | `/api/custody/storage-locations` | List campus storage lockers, vaults, and cabinets |
+| `POST` | `/api/returns` | Verify student collector ID in person and issue verified return record |
+
+### Claims & Notifications
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/claims` | File ownership claim with private verification evidence |
+| `GET` | `/api/claims` | View pending and resolved claims |
+| `PATCH` | `/api/claims/{id}` | Approve or reject a claim (Faculty/Admin only) |
+| `GET` | `/api/notifications` | In-app alerts for match recommendations, claims, and custodian alerts |
+
+---
+
+## 7. Pre-Seeded Institutional Demo Accounts
 
 | Role | Name | Institutional ID | Email | Password |
 |---|---|---|---|---|
 | **Student** | Alex Miller | `STU-5001` | `alex.miller@campus.edu` | `Student@123` |
-| **Faculty** | Prof. Sarah Jenkins | `TCH-101` | `sarah.jenkins@campus.edu` | `Teacher@123` |
-| **Faculty** | Dr. Robert Chen | `TCH-102` | `robert.chen@campus.edu` | `Teacher@123` |
-| **Administrator** | Dr. Eleanor Vance | `ADM-001` | `admin@campus.edu` | `Admin@123` |
+| **Faculty Custodian** | Prof. Sarah Jenkins | `TCH-101` | `sarah.jenkins@campus.edu` | `Teacher@123` |
+| **Faculty Custodian** | Dr. Robert Chen | `TCH-102` | `robert.chen@campus.edu` | `Teacher@123` |
+| **Campus Admin** | Dr. Eleanor Vance | `ADM-001` | `admin@campus.edu` | `Admin@123` |
 
-*Note: The frontend includes a **1-click Demo Role Switcher** in the top navigation bar to preview any role instantly.*
+*Tip: The top navigation bar includes a **1-click Role Switcher** to switch between Student, Faculty, and Admin views instantly.*
 
 ---
 
-## 4. Setup & Running Instructions
+## 8. Setup & Installation
 
-### Backend (FastAPI + Python)
-1. Open a terminal in the `backend/` directory:
+### Prerequisites
+- Python 3.11+
+- Node.js 18+ and npm
+- Valid [API Ninjas](https://api-ninjas.com/) API Key
+
+### Backend Setup
+1. Navigate to the `backend/` directory:
    ```bash
    cd backend
    ```
-2. Install Python dependencies:
+2. Create and activate a virtual environment:
+   ```bash
+   python -m venv venv
+   # Windows:
+   .\venv\Scripts\activate
+   # macOS/Linux:
+   source venv/bin/activate
+   ```
+3. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-3. Initialize and seed the database with demo campus records:
+4. Set up environment variables:
+   ```bash
+   cp .env.example .env
+   # Edit .env and paste your API_NINJAS_API_KEY
+   ```
+5. Seed database with initial categories, campus locations, storage vaults, and demo users:
    ```bash
    python seed.py
    ```
-4. Start the backend server:
+6. Start the FastAPI development server:
    ```bash
-   python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+   python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
    ```
-   API Documentation is available at `http://127.0.0.1:8000/api/docs`.
+   Interactive Swagger API docs: `http://127.0.0.1:8000/api/docs`.
 
-### Frontend (React + Vite + Tailwind CSS)
-1. Open a terminal in the `frontend/` directory:
+### Frontend Setup
+1. Navigate to the `frontend/` directory:
    ```bash
    cd frontend
    ```
@@ -108,22 +213,26 @@ graph TD
    ```bash
    npm run dev
    ```
-   Open your browser at `http://localhost:5173`.
+4. Access the web application at `http://localhost:5173`.
 
 ---
 
-## 5. Automated Tests
+## 9. Verification & Testing
 
-Run backend unit and integration test suite:
+### Backend Unit & Integration Tests
 ```bash
 cd backend
-python -m pytest -v
+python -m pytest tests/test_ninja_detection.py -v
 ```
+Verifies:
+- API Ninjas status endpoint and secure environment configuration
+- Missing API key handling (`503 Service Unavailable`)
+- MIME type validation and error handling
+- Successful response parsing and campus category normalization
 
-All 11 test cases verify:
-- Authentication & JWT token issuance
-- RBAC authorization boundaries
-- Student lost report creation
-- Computer vision cosine similarity calculation
-- Teacher physical handover intake & custody transfer
-- Ownership claim review and in-person return verification
+### Frontend Production Build
+```bash
+cd frontend
+npm run build
+```
+Runs TypeScript verification (`tsc -b`) and Vite production bundling with zero errors.
