@@ -1,33 +1,26 @@
 import React from 'react';
 import { NavLink, Link } from 'react-router-dom';
 import {
-  Shield,
   Search,
-  Sparkles,
   ShieldCheck,
   Building2,
-  Camera,
-  Plus,
   LogOut,
   Layers,
   Home,
-  User as UserIcon,
   GraduationCap,
   Briefcase,
   ShieldAlert,
   Sun,
-  Moon
+  Moon,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
-import { useReportFlow } from '../../context/ReportFlowContext';
 import { NotificationDropdown } from './NotificationDropdown';
 import { UserRole } from '../../types';
 
 export const DesktopNavbar: React.FC = () => {
   const { user, role, logout } = useAuth();
   const { isDark, toggleTheme } = useTheme();
-  const { openReportFlow } = useReportFlow();
 
   const getRoleBadge = (r?: UserRole | null) => {
     switch (r) {
@@ -112,11 +105,6 @@ export const DesktopNavbar: React.FC = () => {
             <span>My Items</span>
           </NavLink>
 
-          <NavLink to="/matches" className={navLinkClass}>
-            <Sparkles className="w-4 h-4 text-purple-500" />
-            <span>AI Matches</span>
-          </NavLink>
-
           {(role === 'TEACHER' || role === 'COLLEGE_ADMIN' || role === 'PLATFORM_ADMIN' || role === 'ADMIN') && (
             <NavLink to="/custody" className={navLinkClass}>
               <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
@@ -132,29 +120,8 @@ export const DesktopNavbar: React.FC = () => {
           )}
         </nav>
 
-        {/* Right: Quick Report Actions, Theme Toggle, Notifications, Profile */}
+        {/* Right: Theme Toggle, Notifications, Profile */}
         <div className="flex items-center gap-2 shrink-0">
-          {/* Quick Camera Reporting Buttons */}
-          <button
-            onClick={() => openReportFlow('LOST')}
-            className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center gap-1.5"
-            title="Report a lost item with camera"
-          >
-            <Camera className="w-3.5 h-3.5" />
-            <span>Report Lost</span>
-          </button>
-
-          <button
-            onClick={() => openReportFlow('FOUND')}
-            className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center gap-1.5"
-            title="Report a found item"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Report Found</span>
-          </button>
-
-          <div className="h-5 w-[1px] bg-slate-200 dark:bg-slate-700 mx-1" />
-
           {/* Theme Toggle Button */}
           <button
             onClick={toggleTheme}

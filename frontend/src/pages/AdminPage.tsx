@@ -1,26 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import {
   ShieldAlert,
-  Activity,
-  Package,
-  CheckCircle2,
-  Clock,
   Sparkles,
   Users,
-  Search,
   FileText,
-  Sliders,
-  Building2,
-  HardDrive
+  Cloud,
+  Upload,
+  AlertCircle,
+  Key
 } from 'lucide-react';
 import { api } from '../services/api';
-import { SystemStats, ModelHealth, AuditLog, User } from '../types';
+import { SystemStats, ModelHealth, AuditLog, User, NinjaDetectionStatus, NinjaDetectionResult } from '../types';
 
 export const AdminPage: React.FC = () => {
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [modelHealth, setModelHealth] = useState<ModelHealth | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [ninjaStatus, setNinjaStatus] = useState<NinjaDetectionStatus | null>(null);
+  const [testResult, setTestResult] = useState<NinjaDetectionResult | null>(null);
+  const [testLoading, setTestLoading] = useState(false);
+  const [testError, setTestError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<'AUDIT' | 'HEALTH' | 'USERS'>('AUDIT');
   const [actionFilter, setActionFilter] = useState('');
@@ -29,20 +29,42 @@ export const AdminPage: React.FC = () => {
   const loadAdminData = async () => {
     setLoading(true);
     try {
-      const [statsRes, healthRes, logsRes, usersRes] = await Promise.all([
+      const [statsRes, healthRes, logsRes, usersRes, ninjaRes] = await Promise.all([
         api.getAnalytics(),
         api.getModelHealth(),
         api.getAuditLogs(actionFilter || undefined),
         api.getUsersDirectory(),
+        api.getNinjaDetectionStatus().catch(() => null),
       ]);
       setStats(statsRes);
       setModelHealth(healthRes);
       setAuditLogs(logsRes);
       setUsers(usersRes);
+      setNinjaStatus(ninjaRes);
     } catch (err) {
       console.error('Failed to load admin data:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleTestNinjaDetect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setTestLoading(true);
+    setTestError(null);
+    setTestResult(null);
+
+    try {
+      const res = await api.ninjaDetectObjects(file);
+      setTestResult(res);
+    } catch (err: any) {
+      setTestError(err.message || 'Failed to detect objects via API Ninjas');
+    } finally {
+      setTestLoading(false);
+      // Reset input value
+      e.target.value = '';
     }
   };
 
@@ -273,11 +295,122 @@ export const AdminPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="bg-purple-50/50 dark:bg-purple-950/20 p-4 rounded-xl border border-purple-200 dark:border-purple-900/40 text-xs text-purple-950 dark:text-purple-300 space-y-1">
-            <p className="font-bold">Multimodal AI Matching Formula</p>
-            <p className="text-slate-600 dark:text-slate-400 leading-relaxed font-mono text-[11px]">
-              Composite Score = (0.60 * Cosine(Visual_A, Visual_B)) + (0.40 * [Category(0.40) + Color(0.25) + Date(0.20) + Location(0.15)])
+          <div className="bg-indigo-50/50 dark:bg-indigo-950/20 p-4 rounded-xl border border-indigo-200 dark:border-indigo-900/40 text-xs text-indigo-950 dark:text-indigo-300 space-y-1">
+            <p className="font-bold">On-Device Computer Vision Object Detection Pipeline</p>
+            <p className="text-slate-600 dark:text-slate-400 leading-relaxed text-xs">
+              Client-side neural network inference (YOLOv5n object detection &amp; MobileNetV2 classification via ONNX Runtime WebAssembly) automatically identifies objects, categories, and colors to streamline item intake.
             </p>
+          </div>
+
+          {/* API Ninjas Cloud Object Detection Integration */}
+          <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-850 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/80 dark:border-slate-700/60 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-indigo-100 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                  <Cloud className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">API Ninjas Cloud Object Detection</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-mono text-[11px]">
+                    https://api.api-ninjas.com/v1/objectdetection
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                {ninjaStatus?.configured ? (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1.5 w-fit">
+                    <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse" />
+                    Configured &amp; Active
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 flex items-center gap-1.5 w-fit">
+                    <Key className="w-3 h-3 text-amber-600" />
+                    Needs API_NINJAS_API_KEY
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {!ninjaStatus?.configured ? (
+              <div className="p-3.5 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-300 space-y-1.5">
+                <div className="flex items-center gap-1.5 font-bold">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>Cloud Detection Configuration Required</span>
+                </div>
+                <p className="text-slate-600 dark:text-slate-300 leading-relaxed text-[11px]">
+                  To activate API Ninjas Object Detection, enter your API key in{' '}
+                  <code className="font-mono bg-white dark:bg-slate-900 px-1 py-0.5 rounded border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300">
+                    backend/.env
+                  </code>{' '}
+                  as <code className="font-mono font-bold">API_NINJAS_API_KEY=YOUR_KEY</code> and restart the backend server.
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                Server-side proxy is active. Captured item photos can be verified against API Ninjas neural object recognition to identify belongings, bounding boxes, and campus categories.
+              </p>
+            )}
+
+            {/* Interactive Object Detection Test Bench */}
+            <div className="pt-2">
+              <div className="flex items-center gap-3">
+                <label className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition-all ${
+                  testLoading
+                    ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                    : 'bg-indigo-600 hover:bg-indigo-700 text-white active:scale-95'
+                }`}>
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>{testLoading ? 'Analyzing via API Ninjas...' : 'Test Image Detection'}</span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleTestNinjaDetect}
+                    disabled={testLoading}
+                    className="hidden"
+                  />
+                </label>
+                <span className="text-[11px] text-slate-400">Upload a photograph to test live inference</span>
+              </div>
+
+              {testError && (
+                <div className="mt-3 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 text-xs text-rose-800 dark:text-rose-300 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                  <span>{testError}</span>
+                </div>
+              )}
+
+              {testResult && (
+                <div className="mt-3 p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-slate-800 dark:text-slate-200">
+                      Detected {testResult.count} Object{testResult.count === 1 ? '' : 's'}
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      Category: {testResult.suggested_category}
+                    </span>
+                  </div>
+
+                  {testResult.detected_objects.length > 0 ? (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {testResult.detected_objects.map((obj, i) => (
+                        <div
+                          key={i}
+                          className="px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-xs text-indigo-900 dark:text-indigo-300 flex items-center gap-1.5"
+                        >
+                          <span className="font-bold capitalize">{obj.label}</span>
+                          <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 bg-indigo-200/60 dark:bg-indigo-900/80 rounded">
+                            {Math.round(obj.confidence * 100)}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500 italic">No recognizable objects detected in this photograph.</p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

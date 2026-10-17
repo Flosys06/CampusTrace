@@ -5,22 +5,24 @@ import {
   X,
   PlusCircle,
   Shield,
-  Calendar,
-  Clock,
-  MapPin,
-  Tag,
-  Sparkles,
   AlertCircle,
+  Cloud,
+  Sparkles,
   CheckCircle2,
+  Send,
+  MapPin,
+  Calendar,
   Package,
-  UserCheck
+  ArrowRight
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
-import { Category, CampusLocation, StorageLocation, User } from '../types';
+import { Category, CampusLocation, StorageLocation, User, NinjaDetectedItem, FoundMatchCandidate } from '../types';
+import { localVisionPipeline, StaleInferenceError } from '../services/vision/localVisionPipeline';
+import { getExifTimeFromFile } from '../utils/exifTime';
 
 export const CreateReportPage: React.FC = () => {
-  const { user, role } = useAuth();
+  const { role } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -37,13 +39,15 @@ export const CreateReportPage: React.FC = () => {
   const [itemName, setItemName] = useState('');
   const [categoryId, setCategoryId] = useState<number | ''>('');
   const [locationId, setLocationId] = useState<number | ''>('');
-  const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
-  const [approximateTime, setApproximateTime] = useState('12:00');
+  const [locationName, setLocationName] = useState('');
+  const [reportDate, setReportDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [approximateTime, setApproximateTime] = useState('');
   const [detailedDescription, setDetailedDescription] = useState('');
   const [visualDescription, setVisualDescription] = useState('');
   const [color, setColor] = useState('');
   const [brand, setBrand] = useState('');
   const [distinguishingFeatures, setDistinguishingFeatures] = useState('');
+  const [handedOverTeacherName, setHandedOverTeacherName] = useState('');
   const [priority, setPriority] = useState<'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'>('NORMAL');
 
   // Teacher specific found item fields
@@ -54,6 +58,17 @@ export const CreateReportPage: React.FC = () => {
   // Image upload state
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [analyzingImage, setAnalyzingImage] = useState(false);
+  const [ninjaScanning, setNinjaScanning] = useState(false);
+  const [ninjaItems, setNinjaItems] = useState<NinjaDetectedItem[]>([]);
+  const [ninjaMessage, setNinjaMessage] = useState<string | null>(null);
+
+  // Matched found items in custody
+  const [foundMatches, setFoundMatches] = useState<FoundMatchCandidate[]>([]);
+  const [selectedCandidate, setSelectedCandidate] = useState<FoundMatchCandidate | null>(null);
+  const [claimNotes, setClaimNotes] = useState('');
+  const [isAlerting, setIsAlerting] = useState(false);
+  const [alertSuccess, setAlertSuccess] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,9 +100,11 @@ export const CreateReportPage: React.FC = () => {
     };
 
     loadFormData();
+    // Pre-warm local vision model in the background for zero-latency autofill
+    localVisionPipeline.prewarm().catch(() => {});
   }, [role]);
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       if (file.size > 10 * 1024 * 1024) {
@@ -95,8 +112,93 @@ export const CreateReportPage: React.FC = () => {
         return;
       }
       setImageFile(file);
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview);
+      }
       setImagePreview(URL.createObjectURL(file));
       setError(null);
+      setAnalyzingImage(true);
+      setNinjaMessage(null);
+      setFoundMatches([]);
+      setSelectedCandidate(null);
+      setAlertSuccess(null);
+
+      // Attempt reading EXIF timestamp from file
+      getExifTimeFromFile(file).then((timeStr) => {
+        if (timeStr) {
+          setApproximateTime(timeStr);
+        }
+      });
+
+      // 1. Run automatic API Ninjas object detection & autofill
+      try {
+        const ninjaRes = await api.ninjaDetectObjects(file);
+        setNinjaItems(ninjaRes.detected_objects);
+        if (ninjaRes.detected_objects && ninjaRes.detected_objects.length > 0) {
+          const top = ninjaRes.detected_objects[0];
+          const formattedLabel = top.label.charAt(0).toUpperCase() + top.label.slice(1);
+          if (!itemName.trim() || itemName === 'Campus Belonging') {
+            setItemName(formattedLabel);
+          }
+          if (ninjaRes.suggested_category) {
+            const matched = categories.find(
+              c => c.name.toLowerCase() === ninjaRes.suggested_category?.toLowerCase() ||
+                   c.name.toLowerCase().includes(ninjaRes.suggested_category?.toLowerCase() || '')
+            );
+            if (matched) {
+              setCategoryId(matched.id);
+            }
+          }
+          if (!detailedDescription.trim() || detailedDescription.startsWith('Identified')) {
+            setDetailedDescription(ninjaRes.suggested_description || `Identified ${formattedLabel} via photo detection.`);
+          }
+          if (!visualDescription.trim() || visualDescription.startsWith('Identified')) {
+            setVisualDescription(ninjaRes.suggested_description || `Identified ${formattedLabel} via photo detection.`);
+          }
+          setNinjaMessage(`Auto-detected: ${formattedLabel} (${Math.round(top.confidence * 100)}% confidence) via API Ninjas`);
+        }
+      } catch (ninjaErr: any) {
+        console.warn('API Ninjas auto-detection fallback:', ninjaErr);
+      }
+
+      // 2. Also run local vision pipeline for color and secondary attributes
+      try {
+        const result = await localVisionPipeline.analyzeImage(file, categories);
+
+        if (!itemName.trim() || itemName === 'Campus Belonging') {
+          setItemName(result.itemName);
+        }
+        if (!categoryId && result.categoryId) {
+          setCategoryId(result.categoryId);
+        }
+        if (!color.trim() && result.primaryColor && result.primaryColor !== 'Unknown') {
+          setColor(result.primaryColor);
+        }
+        if (!detailedDescription.trim()) {
+          setDetailedDescription(result.suggestedDescription);
+        }
+        if (!visualDescription.trim()) {
+          setVisualDescription(result.suggestedDescription);
+        }
+      } catch (err: any) {
+        if (!(err instanceof StaleInferenceError)) {
+          console.warn('Local vision autofill error:', err);
+        }
+      } finally {
+        setAnalyzingImage(false);
+      }
+
+      // 3. If reporting a LOST item, privately check for existing FOUND items in campus custody!
+      if (reportType === 'LOST') {
+        try {
+          const matchRes = await api.scanFoundMatches(file);
+          if (matchRes.matches && matchRes.matches.length > 0) {
+            setFoundMatches(matchRes.matches);
+          }
+        } catch (matchErr) {
+          console.warn('Found match scan error:', matchErr);
+        }
+      }
     }
   };
 
@@ -106,14 +208,69 @@ export const CreateReportPage: React.FC = () => {
       URL.revokeObjectURL(imagePreview);
       setImagePreview(null);
     }
+    setAnalyzingImage(false);
+    setNinjaItems([]);
+    setNinjaMessage(null);
+    setFoundMatches([]);
+    setSelectedCandidate(null);
+    setAlertSuccess(null);
+  };
+
+  const handleAlertTeacherDirect = async (candidate: FoundMatchCandidate) => {
+    setIsAlerting(true);
+    try {
+      const res = await api.alertTeacher({
+        found_report_id: candidate.report_id,
+        claim_notes: claimNotes.trim() || `Student matched item photo (${candidate.item_name}) during report intake.`,
+      });
+      setAlertSuccess(res.message);
+      setSelectedCandidate(null);
+    } catch (err: any) {
+      alert(err.message || 'Failed to alert custodian teacher.');
+    } finally {
+      setIsAlerting(false);
+    }
+  };
+
+  const handleScanWithNinja = async () => {
+    if (!imageFile) return;
+    setNinjaScanning(true);
+    setNinjaMessage(null);
+    try {
+      const res = await api.ninjaDetectObjects(imageFile);
+      setNinjaItems(res.detected_objects);
+      if (res.detected_objects.length > 0) {
+        const top = res.detected_objects[0];
+        if (!itemName.trim() || itemName === 'Campus Belonging') {
+          setItemName(top.label.charAt(0).toUpperCase() + top.label.slice(1));
+        }
+        if (res.suggested_category) {
+          const matched = categories.find(c => c.name.toLowerCase() === res.suggested_category?.toLowerCase());
+          if (matched) {
+            setCategoryId(matched.id);
+          }
+        }
+        setNinjaMessage(`Detected: ${res.detected_objects.map(o => `${o.label} (${Math.round(o.confidence * 100)}%)`).join(', ')}`);
+      } else {
+        setNinjaMessage('No objects detected by API Ninjas.');
+      }
+    } catch (err: any) {
+      if (err.message && err.message.includes('not configured')) {
+        setNinjaMessage('API Ninjas is not configured. Add API_NINJAS_API_KEY to backend/.env.');
+      } else {
+        setNinjaMessage(err.message || 'API Ninjas detection failed.');
+      }
+    } finally {
+      setNinjaScanning(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!itemName.trim() || !categoryId || !locationId || !detailedDescription.trim()) {
-      setError('Please fill in all required fields (Item Name, Category, Location, Description)');
+    if (!itemName.trim() || !categoryId || !locationName.trim() || !detailedDescription.trim()) {
+      setError('Please fill in all required fields (Item Name, Category, Campus Location, Description)');
       return;
     }
 
@@ -124,13 +281,17 @@ export const CreateReportPage: React.FC = () => {
 
     setLoading(true);
     try {
+      const fallbackLocId = locationId || (campusLocations.length > 0 ? campusLocations[0].id : 1);
       const payload: any = {
         report_type: reportType,
         item_name: itemName.trim(),
         category_id: Number(categoryId),
-        location_id: Number(locationId),
+        location_id: Number(fallbackLocId),
+        location_name: locationName.trim(),
+        manual_campus_location: locationName.trim(),
+        handed_over_teacher_name: handedOverTeacherName.trim() || undefined,
         report_date: reportDate,
-        approximate_event_time: approximateTime,
+        approximate_event_time: approximateTime.trim() || undefined,
         detailed_description: detailedDescription.trim(),
         visual_description: visualDescription.trim() || detailedDescription.trim(),
         color: color.trim() || undefined,
@@ -175,7 +336,7 @@ export const CreateReportPage: React.FC = () => {
         </h1>
         <p className="text-xs sm:text-sm text-slate-500 mt-1">
           {reportType === 'LOST'
-            ? 'Submit item information and a photograph to trigger instant AI similarity matching with campus found reports.'
+            ? 'Submit item details and an optional photograph to search for matching found items on campus.'
             : 'Record found items to establish an accountable chain of custody and help return them to their rightful owners.'}
         </p>
       </div>
@@ -216,34 +377,127 @@ export const CreateReportPage: React.FC = () => {
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Section 1: Item Photo Upload & Preview */}
         <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900">Photograph of Belonging</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Our computer vision model extracts spatial color histograms and gradient features for AI matching.
-              </p>
-            </div>
-            <span className="text-[11px] font-medium text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-100 flex items-center gap-1">
-              <Sparkles className="w-3 h-3" />
-              CV AI Feature Extraction
-            </span>
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">Photograph of Belonging</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Attach a clear photograph to assist in identifying and matching your item.
+            </p>
           </div>
 
           {imagePreview ? (
-            <div className="relative w-full max-w-sm rounded-xl overflow-hidden border-2 border-indigo-500 shadow-sm bg-slate-50">
-              <img src={imagePreview} alt="Preview" className="w-full h-56 object-cover" />
-              <button
-                type="button"
-                onClick={removeImage}
-                className="absolute top-2 right-2 p-1.5 rounded-full bg-slate-900/80 hover:bg-slate-900 text-white transition-colors"
-                title="Remove Image"
-              >
-                <X className="w-4 h-4" />
-              </button>
-              <div className="p-2.5 bg-white border-t border-slate-200 text-center text-xs text-slate-600 font-medium">
-                {imageFile?.name} ({(imageFile!.size / 1024).toFixed(1)} KB)
+            <>
+              <div className="relative w-full max-w-sm rounded-xl overflow-hidden border-2 border-indigo-500 shadow-sm bg-slate-50">
+                <img src={imagePreview} alt="Preview" className="w-full h-56 object-cover" />
+                <button
+                  type="button"
+                  onClick={removeImage}
+                  className="absolute top-2 right-2 p-1.5 rounded-full bg-slate-900/80 hover:bg-slate-900 text-white transition-colors"
+                  title="Remove Image"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+                <div className="p-2.5 bg-white border-t border-slate-200 text-center text-xs text-slate-600 font-medium">
+                  {imageFile?.name} ({(imageFile!.size / 1024).toFixed(1)} KB)
+                </div>
               </div>
-            </div>
+
+              {/* Automatic Object Detection & Custody Matches */}
+              <div className="flex flex-col gap-3">
+                {ninjaMessage && (
+                  <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-xs text-indigo-900 dark:text-indigo-200 flex items-start gap-2">
+                    <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold">{ninjaMessage}</span>
+                      <p className="text-[11px] text-indigo-700 dark:text-indigo-300 mt-0.5">
+                        Form title, category, and description have been automatically populated.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {ninjaItems.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {ninjaItems.map((item, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300 text-xs font-medium flex items-center gap-1.5"
+                      >
+                        <span className="font-bold capitalize">{item.label}</span>
+                        <span className="text-[10px] opacity-75 font-mono">{Math.round(item.confidence * 100)}%</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Teacher Alert Success Banner */}
+                {alertSuccess && (
+                  <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200 flex items-start gap-2.5">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <div>
+                      <strong className="block text-sm font-bold">Custodian Alert Sent!</strong>
+                      <p className="mt-0.5">{alertSuccess}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Candidate Matches in Campus Custody Banner */}
+                {foundMatches.length > 0 && !alertSuccess && (
+                  <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 space-y-3">
+                    <div className="flex items-center gap-2 text-xs font-bold text-amber-800 dark:text-amber-300">
+                      <Shield className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                      <span>{foundMatches.length} Matching Item{foundMatches.length > 1 ? 's' : ''} Already in Campus Faculty Custody!</span>
+                    </div>
+                    <p className="text-xs text-amber-900/80 dark:text-amber-200/80">
+                      Before submitting a new lost report, verify if this recovered item is yours:
+                    </p>
+
+                    <div className="space-y-2">
+                      {foundMatches.map((cand) => (
+                        <div
+                          key={cand.report_id}
+                          className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+                        >
+                          <div className="flex items-center gap-3">
+                            {cand.primary_image_key ? (
+                              <img
+                                src={`/uploads/${cand.primary_image_key}`}
+                                alt={cand.item_name}
+                                className="w-12 h-12 rounded-lg object-cover border border-slate-200 dark:border-slate-700"
+                              />
+                            ) : (
+                              <div className="w-12 h-12 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400">
+                                <Package className="w-6 h-6" />
+                              </div>
+                            )}
+                            <div>
+                              <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                                <span>{cand.item_name}</span>
+                                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+                                  {Math.round(cand.confidence_score * 100)}% Match
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                                Custodian: <strong className="text-indigo-600 dark:text-indigo-400">{cand.handed_over_teacher_name || 'Faculty Staff'}</strong> • {cand.location_name}
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleAlertTeacherDirect(cand)}
+                            disabled={isAlerting}
+                            className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center gap-1.5 shrink-0"
+                          >
+                            <Send className="w-3 h-3" />
+                            <span>{isAlerting ? 'Alerting...' : 'Yes, This is Mine — Alert Teacher'}</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
           ) : (
             <label className="border-2 border-dashed border-slate-300 hover:border-indigo-400 bg-slate-50 hover:bg-indigo-50/20 rounded-2xl p-8 flex flex-col items-center justify-center cursor-pointer transition-colors text-center group">
               <div className="w-12 h-12 rounded-2xl bg-white shadow-xs border border-slate-200 flex items-center justify-center text-slate-500 group-hover:text-indigo-600 transition-colors mb-3">
@@ -253,7 +507,7 @@ export const CreateReportPage: React.FC = () => {
                 Click to upload or drag & drop item photograph
               </span>
               <span className="text-[11px] text-slate-400 mt-1">
-                PNG, JPG, or WebP up to 10MB. Clear lighting improves match precision.
+                PNG, JPG, or WebP up to 10MB.
               </span>
               <input
                 type="file"
@@ -262,6 +516,13 @@ export const CreateReportPage: React.FC = () => {
                 className="hidden"
               />
             </label>
+          )}
+
+          {analyzingImage && (
+            <div className="flex items-center gap-2.5 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 animate-pulse">
+              <div className="w-3.5 h-3.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin shrink-0" />
+              <span className="font-medium">Preparing item details…</span>
+            </div>
           )}
         </div>
 
@@ -306,20 +567,16 @@ export const CreateReportPage: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                Campus Discovery Location *
+                Campus Location *
               </label>
-              <select
-                value={locationId}
-                onChange={(e) => setLocationId(Number(e.target.value))}
+              <input
+                type="text"
+                value={locationName}
+                onChange={(e) => setLocationName(e.target.value)}
+                placeholder={reportType === 'LOST' ? 'Enter where the item was lost' : 'Enter where the item was found'}
                 className="block w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900"
                 required
-              >
-                {campusLocations.map((loc) => (
-                  <option key={loc.id} value={loc.id}>
-                    {loc.name} ({loc.building})
-                  </option>
-                ))}
-              </select>
+              />
             </div>
 
             <div>
@@ -340,9 +597,10 @@ export const CreateReportPage: React.FC = () => {
                 Approximate Time
               </label>
               <input
-                type="time"
+                type="text"
                 value={approximateTime}
                 onChange={(e) => setApproximateTime(e.target.value)}
+                placeholder="e.g. 10:30 AM"
                 className="block w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900"
               />
             </div>
@@ -423,6 +681,23 @@ export const CreateReportPage: React.FC = () => {
                 className="block w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900 placeholder-slate-400"
                 required
               />
+            </div>
+
+            <div className="sm:col-span-3">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+                Teacher / Staff Handed To {reportType === 'FOUND' && <span className="text-rose-500">*</span>}
+              </label>
+              <input
+                type="text"
+                value={handedOverTeacherName}
+                onChange={(e) => setHandedOverTeacherName(e.target.value)}
+                placeholder="e.g. Prof. Sharma (CSE Dept), Office Room 204, or Lab Incharge"
+                required={reportType === 'FOUND'}
+                className="block w-full px-3.5 py-2.5 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white placeholder-slate-400"
+              />
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 block">
+                Prime Custody Record: Specify which teacher, lab incharge, or faculty member received physical possession of the item.
+              </span>
             </div>
           </div>
         </div>
@@ -525,7 +800,7 @@ export const CreateReportPage: React.FC = () => {
             } disabled:opacity-50`}
           >
             {loading ? (
-              'Processing & Running AI Vector Match...'
+              'Submitting Report...'
             ) : (
               <>
                 <PlusCircle className="w-4 h-4" />

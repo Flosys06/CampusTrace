@@ -162,6 +162,8 @@ export interface Report {
   report_date: string;
   approximate_event_time?: string | null;
   location_id: number;
+  manual_campus_location?: string | null;
+  handed_over_teacher_name?: string | null;
   detailed_description: string;
   status: ReportStatus;
   priority: ReportPriority;
@@ -336,3 +338,79 @@ export interface AuditLog {
   ip_address?: string | null;
   actor?: User | null;
 }
+
+export interface NinjaBoundingBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface NinjaDetectedItem {
+  label: string;
+  confidence: number;
+  bounding_box?: NinjaBoundingBox | null;
+  suggested_category?: string | null;
+}
+
+export interface NinjaDetectionResult {
+  success: boolean;
+  count: number;
+  detected_objects: NinjaDetectedItem[];
+  top_label?: string | null;
+  top_confidence?: number | null;
+  suggested_category?: string | null;
+  suggested_title?: string | null;
+  suggested_description?: string | null;
+  provider: string;
+}
+
+export interface NinjaDetectionStatus {
+  configured: boolean;
+  provider: string;
+  endpoint: string;
+  supported_formats: string[];
+  max_size_mb: number;
+}
+
+export interface FoundMatchCandidate {
+  report_id: number;
+  report_number: string;
+  item_name: string;
+  category_name: string;
+  color?: string | null;
+  location_name: string;
+  report_date: string;
+  status: string;
+  handed_over_teacher_name?: string | null;
+  primary_image_key?: string | null;
+  confidence_score: number;
+  match_reasons: string[];
+  detailed_description?: string | null;
+}
+
+export interface ScanMatchResponse {
+  success: boolean;
+  detected_label: string;
+  detected_confidence: number;
+  detected_category: string;
+  detected_color: string;
+  matches_count: number;
+  matches: FoundMatchCandidate[];
+}
+
+export interface AlertTeacherRequest {
+  found_report_id: number;
+  claim_notes?: string;
+}
+
+export interface AlertTeacherResponse {
+  success: boolean;
+  claim_id: number;
+  report_id: number;
+  report_number: string;
+  teacher_name?: string | null;
+  message: string;
+  pickup_instructions: string;
+}
+

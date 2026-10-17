@@ -3,7 +3,11 @@ import { CameraReportFlow } from '../components/camera/CameraReportFlow';
 
 interface ReportFlowContextType {
   isOpen: boolean;
-  openReportFlow: (type?: 'LOST' | 'FOUND') => void;
+  openReportFlow: (
+    type?: 'LOST' | 'FOUND',
+    preloadedFile?: File | null,
+    preloadedLabel?: string | null
+  ) => void;
   closeReportFlow: () => void;
 }
 
@@ -11,15 +15,25 @@ const ReportFlowContext = createContext<ReportFlowContextType | undefined>(undef
 
 export const ReportFlowProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [initialType, setInitialType] = useState<'LOST' | 'FOUND'>('LOST');
+  const [initialType, setInitialType] = useState<'LOST' | 'FOUND'>('FOUND');
+  const [initialFile, setInitialFile] = useState<File | null>(null);
+  const [initialLabel, setInitialLabel] = useState<string | null>(null);
 
-  const openReportFlow = (type: 'LOST' | 'FOUND' = 'LOST') => {
+  const openReportFlow = (
+    type: 'LOST' | 'FOUND' = 'FOUND',
+    preloadedFile?: File | null,
+    preloadedLabel?: string | null
+  ) => {
     setInitialType(type);
+    setInitialFile(preloadedFile || null);
+    setInitialLabel(preloadedLabel || null);
     setIsOpen(true);
   };
 
   const closeReportFlow = () => {
     setIsOpen(false);
+    setInitialFile(null);
+    setInitialLabel(null);
   };
 
   return (
@@ -28,6 +42,8 @@ export const ReportFlowProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       {isOpen && (
         <CameraReportFlow
           initialType={initialType}
+          initialFile={initialFile}
+          initialLabel={initialLabel}
           onClose={closeReportFlow}
           onSuccess={() => {
             closeReportFlow();

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   Camera,
@@ -6,61 +7,64 @@ import {
   RotateCw,
   Image as ImageIcon,
   Check,
-  Sparkles,
   ArrowRight,
   Shield,
   AlertCircle,
   CheckCircle2,
   Package,
-  ChevronDown
+  ChevronDown,
+  Sparkles,
+  Send,
+  Upload
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
-import { Category, CampusLocation, StorageLocation, User } from '../../types';
+import { Category, CampusLocation, StorageLocation, User, FoundMatchCandidate } from '../../types';
+import { localVisionPipeline, StaleInferenceError } from '../../services/vision/localVisionPipeline';
+import { getExifTimeFromFile } from '../../utils/exifTime';
 
 interface CameraReportFlowProps {
   initialType?: 'LOST' | 'FOUND';
+  initialFile?: File | null;
+  initialLabel?: string | null;
   onClose: () => void;
   onSuccess?: (reportId: number) => void;
 }
 
 export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
-  initialType = 'LOST',
+  initialType = 'FOUND',
+  initialFile = null,
+  initialLabel = null,
   onClose,
   onSuccess,
 }) => {
   const { role } = useAuth();
   const navigate = useNavigate();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Step 1: TYPE, Step 2: CAMERA, Step 3: AI_ANALYSIS, Step 4: DETAILS, Step 5: CONFIRMATION
-  const [currentStep, setCurrentStep] = useState<
-    'TYPE' | 'CAMERA' | 'AI_ANALYSIS' | 'DETAILS' | 'SUCCESS'
-  >('TYPE');
-
+  // Directly starts on the comprehensive details/intake form
+  const [currentStep, setCurrentStep] = useState<'DETAILS' | 'SUCCESS'>('DETAILS');
   const [reportType, setReportType] = useState<'LOST' | 'FOUND'>(initialType);
 
-  // Camera states
+  // Optional Live Webcam states (only opened on explicit user request)
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
   const [hasCameraAccess, setHasCameraAccess] = useState<boolean | null>(null);
+  const [showWebcam, setShowWebcam] = useState(false);
 
   // Captured photo
   const [capturedFile, setCapturedFile] = useState<File | null>(null);
   const [capturedPreview, setCapturedPreview] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  // AI Suggestions
+  // Local Vision Analysis Status
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [aiSuggestions, setAiSuggestions] = useState<{
-    storage_key?: string;
-    primary_color: string;
-    suggested_category_id: number | null;
-    suggested_category_name: string;
-    suggested_item_name: string;
-    suggested_description: string;
-    headline: string;
-  } | null>(null);
+  const [ninjaDetectedLabel, setNinjaDetectedLabel] = useState<string | null>(null);
+  const [ninjaConfidence, setNinjaConfidence] = useState<number | null>(null);
+  const [foundMatches, setFoundMatches] = useState<FoundMatchCandidate[]>([]);
+  const [isAlerting, setIsAlerting] = useState(false);
+  const [alertSuccess, setAlertSuccess] = useState<string | null>(null);
 
   // Lookups
   const [categories, setCategories] = useState<Category[]>([]);
@@ -72,12 +76,14 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
   const [itemName, setItemName] = useState('');
   const [categoryId, setCategoryId] = useState<number | ''>('');
   const [locationId, setLocationId] = useState<number | ''>('');
+  const [locationName, setLocationName] = useState('');
   const [reportDate, setReportDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const [approximateTime, setApproximateTime] = useState('12:00');
+  const [approximateTime, setApproximateTime] = useState('');
   const [description, setDescription] = useState('');
   const [color, setColor] = useState('');
   const [brand, setBrand] = useState('');
   const [distinguishingFeatures, setDistinguishingFeatures] = useState('');
+  const [handedOverTeacherName, setHandedOverTeacherName] = useState('');
   const [showOptionalFields, setShowOptionalFields] = useState(false);
 
   // Teacher Handover fields
@@ -121,7 +127,22 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
       }
     };
     loadLookups();
+    // Pre-warm local on-device neural models in the background
+    localVisionPipeline.prewarm().catch(() => {});
   }, [role]);
+
+  // Handle preloaded file from photo scan match modal
+  useEffect(() => {
+    if (initialFile) {
+      setCapturedFile(initialFile);
+      setCapturedPreview(URL.createObjectURL(initialFile));
+      if (initialLabel) {
+        setItemName(initialLabel);
+      }
+      setCurrentStep('DETAILS');
+      runAiAnalysis(initialFile);
+    }
+  }, [initialFile, initialLabel]);
 
   // Start Camera stream when in CAMERA step
   const startCamera = async () => {
@@ -157,13 +178,13 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
   };
 
   useEffect(() => {
-    if (currentStep === 'CAMERA') {
+    if (showWebcam) {
       startCamera();
     } else {
       stopCamera();
     }
     return () => stopCamera();
-  }, [currentStep, facingMode]);
+  }, [showWebcam, facingMode]);
 
   // Shutter Capture
   const handleCaptureShutter = () => {
@@ -185,6 +206,13 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
         });
         setCapturedFile(file);
         setCapturedPreview(URL.createObjectURL(file));
+
+        // Auto-populate approximate time with capture time
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        setApproximateTime(timeStr);
+
+        setShowWebcam(false);
         stopCamera();
         runAiAnalysis(file);
       },
@@ -199,6 +227,15 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
       const file = e.target.files[0];
       setCapturedFile(file);
       setCapturedPreview(URL.createObjectURL(file));
+
+      getExifTimeFromFile(file).then((timeStr) => {
+        if (timeStr) {
+          setApproximateTime(timeStr);
+        } else {
+          setApproximateTime('');
+        }
+      });
+
       stopCamera();
       runAiAnalysis(file);
     }
@@ -223,51 +260,126 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
       if (file.type.startsWith('image/')) {
         setCapturedFile(file);
         setCapturedPreview(URL.createObjectURL(file));
+
+        getExifTimeFromFile(file).then((timeStr) => {
+          if (timeStr) {
+            setApproximateTime(timeStr);
+          } else {
+            setApproximateTime('');
+          }
+        });
+
         stopCamera();
         runAiAnalysis(file);
       }
     }
   };
 
-  // AI Analysis Step
+  // Analysis Step (Cloud Detection + Local Vision Pipeline)
   const runAiAnalysis = async (file: File) => {
-    setCurrentStep('AI_ANALYSIS');
+    setCurrentStep('DETAILS');
     setIsAnalyzing(true);
-    try {
-      const result = await api.analyzeImage(file);
-      setAiSuggestions(result);
+    setFoundMatches([]);
+    setAlertSuccess(null);
 
-      // Pre-fill form fields based on AI suggestions
-      setItemName(result.suggested_item_name);
-      if (result.suggested_category_id) {
-        setCategoryId(result.suggested_category_id);
+    // 1. Automatic Cloud Object Detection via API Ninjas
+    try {
+      const ninjaRes = await api.ninjaDetectObjects(file);
+      if (ninjaRes.detected_objects && ninjaRes.detected_objects.length > 0) {
+        const top = ninjaRes.detected_objects[0];
+        const formattedLabel = top.label.charAt(0).toUpperCase() + top.label.slice(1);
+        setNinjaDetectedLabel(formattedLabel);
+        setNinjaConfidence(top.confidence);
+
+        if (!itemName.trim() || itemName === 'Campus Belonging') {
+          setItemName(formattedLabel);
+        }
+        if (ninjaRes.suggested_category) {
+          const matched = categories.find(
+            c => c.name.toLowerCase() === ninjaRes.suggested_category?.toLowerCase() ||
+                 c.name.toLowerCase().includes(ninjaRes.suggested_category?.toLowerCase() || '')
+          );
+          if (matched) {
+            setCategoryId(matched.id);
+          }
+        }
+        if (!description.trim() || description.startsWith('Identified')) {
+          setDescription(ninjaRes.suggested_description || `Identified ${formattedLabel} via photo detection.`);
+        }
       }
-      setColor(result.primary_color);
-      setDescription(result.suggested_description);
-    } catch (err) {
-      console.error('AI analysis fallback:', err);
-      // Fallback
-      setItemName('Campus Belonging');
-      setAiSuggestions({
-        primary_color: 'Unspecified',
-        suggested_category_id: categories.length > 0 ? categories[0].id : null,
-        suggested_category_name: 'Personal Item',
-        suggested_item_name: 'Personal Item',
-        suggested_description: 'Item photographed on campus.',
-        headline: 'Item photograph ready for submission',
-      });
+    } catch (ninjaErr) {
+      console.warn('API Ninjas auto-detection fallback:', ninjaErr);
+    }
+
+    // 2. Local vision pipeline for color and secondary attributes
+    try {
+      const result = await localVisionPipeline.analyzeImage(file, categories);
+
+      // Pre-fill form fields based on detection results
+      if (!itemName.trim() || itemName === 'Campus Belonging') {
+        setItemName(result.itemName);
+      }
+      if (!categoryId && result.categoryId) {
+        setCategoryId(result.categoryId);
+      }
+      if (!color.trim() && result.primaryColor && result.primaryColor !== 'Unknown') {
+        setColor(result.primaryColor);
+      }
+      if (!description.trim()) {
+        setDescription(result.suggestedDescription);
+      }
+    } catch (err: any) {
+      if (!(err instanceof StaleInferenceError)) {
+        console.warn('Local vision analysis error, using fallback:', err);
+      }
+      if (!itemName.trim()) {
+        setItemName('Campus Belonging');
+      }
+      if (!description.trim()) {
+        setDescription('Item photographed on campus grounds.');
+      }
     } finally {
       setIsAnalyzing(false);
     }
+
+    // 3. If reporting a LOST item, privately check for existing FOUND items in campus custody!
+    if (reportType === 'LOST') {
+      try {
+        const matchRes = await api.scanFoundMatches(file);
+        if (matchRes.matches && matchRes.matches.length > 0) {
+          setFoundMatches(matchRes.matches);
+        }
+      } catch (matchErr) {
+        console.warn('Found match scan error:', matchErr);
+      }
+    }
   };
 
-  // Retake photo
+  const handleAlertTeacherDirect = async (candidate: FoundMatchCandidate) => {
+    setIsAlerting(true);
+    try {
+      const res = await api.alertTeacher({
+        found_report_id: candidate.report_id,
+        claim_notes: `Student matched item photo (${candidate.item_name}) during camera report intake.`,
+      });
+      setAlertSuccess(res.message);
+    } catch (err: any) {
+      alert(err.message || 'Failed to alert custodian teacher.');
+    } finally {
+      setIsAlerting(false);
+    }
+  };
+
+  // Retake / Replace photo
   const handleRetake = () => {
     if (capturedPreview) URL.revokeObjectURL(capturedPreview);
     setCapturedFile(null);
     setCapturedPreview(null);
-    setAiSuggestions(null);
-    setCurrentStep('CAMERA');
+    setNinjaDetectedLabel(null);
+    setNinjaConfidence(null);
+    setFoundMatches([]);
+    setAlertSuccess(null);
+    setShowWebcam(false);
   };
 
   // Submit Final Report
@@ -275,20 +387,24 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
     e.preventDefault();
     setErrorMessage(null);
 
-    if (!itemName.trim() || !categoryId || !locationId) {
+    if (!itemName.trim() || !categoryId || !locationName.trim()) {
       setErrorMessage('Please fill in Item Name, Category, and Campus Location');
       return;
     }
 
     setIsSubmitting(true);
     try {
+      const fallbackLocId = locationId || (locations.length > 0 ? locations[0].id : 1);
       const payload: any = {
         report_type: reportType,
         item_name: itemName.trim(),
         category_id: Number(categoryId),
-        location_id: Number(locationId),
+        location_id: Number(fallbackLocId),
+        location_name: locationName.trim(),
+        manual_campus_location: locationName.trim(),
+        handed_over_teacher_name: handedOverTeacherName.trim() || undefined,
         report_date: reportDate,
-        approximate_event_time: approximateTime,
+        approximate_event_time: approximateTime.trim() || undefined,
         detailed_description: description.trim() || itemName.trim(),
         visual_description: description.trim() || itemName.trim(),
         color: color.trim() || undefined,
@@ -341,371 +457,297 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-0 sm:p-4 animate-in fade-in duration-150">
-      <div className="w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-xl md:max-w-2xl bg-slate-900 sm:rounded-3xl sm:border sm:border-slate-800 sm:shadow-2xl overflow-y-auto flex flex-col relative text-white">
-        {/* ---------------- STEP 1: REPORT TYPE ---------------- */}
-        {currentStep === 'TYPE' && (
-          <div className="flex-1 flex flex-col justify-between p-6 max-w-xl mx-auto w-full text-white">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center">
-                <Camera className="w-4 h-4 text-white" />
-              </div>
-              <span className="text-sm font-bold tracking-tight">Camera Intake</span>
-            </div>
+  const modalContent = (
+    <div className="fixed inset-0 z-[9999] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
+      <div className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden my-auto flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150">
+        {/* Modal Header */}
+        {currentStep === 'DETAILS' && (
+          <div className="p-5 sm:p-6 bg-gradient-to-r from-emerald-950 via-slate-900 to-indigo-950 text-white shrink-0 relative">
             <button
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-white rounded-full bg-slate-800/80"
-              aria-label="Close"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          <div className="space-y-6 my-auto">
-            <div className="text-center space-y-1">
-              <h2 className="text-2xl font-extrabold tracking-tight">What happened?</h2>
-              <p className="text-xs text-slate-400 max-w-xs mx-auto">
-                Snap a photo. Our computer vision model cross-matches colors and features instantly.
-              </p>
-            </div>
-
-            <div className="space-y-3">
-              <button
-                onClick={() => {
-                  setReportType('LOST');
-                  setCurrentStep('CAMERA');
-                }}
-                className="w-full p-5 rounded-2xl bg-gradient-to-r from-rose-950 to-slate-900 border-2 border-rose-500/40 hover:border-rose-400 active:scale-98 transition-all flex items-center justify-between text-left group"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-xl bg-rose-600/30 border border-rose-500 flex items-center justify-center text-rose-400 group-hover:bg-rose-600 group-hover:text-white transition-colors shrink-0">
-                    <Package className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white">I lost something</h3>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Take a photo of a similar item or upload receipts / specs
-                    </p>
-                  </div>
-                </div>
-                <ArrowRight className="w-5 h-5 text-rose-400 group-hover:translate-x-1 transition-transform" />
-              </button>
-
-              <button
-                onClick={() => {
-                  setReportType('FOUND');
-                  setCurrentStep('CAMERA');
-                }}
-                className="w-full p-5 rounded-2xl bg-gradient-to-r from-emerald-950 to-slate-900 border-2 border-emerald-500/40 hover:border-emerald-400 active:scale-98 transition-all flex items-center justify-between text-left group"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-xl bg-emerald-600/30 border border-emerald-500 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-600 group-hover:text-white transition-colors shrink-0">
-                    <Shield className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white">I found something</h3>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Photograph item to initiate secure faculty custody intake
-                    </p>
-                  </div>
-                </div>
-                <ArrowRight className="w-5 h-5 text-emerald-400 group-hover:translate-x-1 transition-transform" />
-              </button>
-            </div>
-          </div>
-
-          <div className="text-center text-[11px] text-slate-500">
-            CampusTrace &bull; Track it. Verify it. Return it.
-          </div>
-        </div>
-      )}
-
-      {/* ---------------- STEP 2: CAMERA CAPTURE ---------------- */}
-      {currentStep === 'CAMERA' && (
-        <div className="flex-1 flex flex-col justify-between relative bg-black select-none">
-          {/* Top Camera Controls */}
-          <div className="absolute top-0 left-0 right-0 z-20 p-4 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent">
-            <button
-              onClick={() => setCurrentStep('TYPE')}
-              className="p-2.5 rounded-full bg-slate-900/60 backdrop-blur-md text-white hover:bg-slate-800"
-              aria-label="Back"
+              className="absolute top-5 right-5 p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors"
+              aria-label="Close dialog"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <span className="text-xs font-bold uppercase tracking-wider text-white/90 bg-black/40 px-3 py-1 rounded-full backdrop-blur-md border border-white/10">
-              {reportType === 'LOST' ? 'Photograph Lost Item' : 'Photograph Found Item'}
-            </span>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setFacingMode((m) => (m === 'environment' ? 'user' : 'environment'))}
-                className="p-2.5 rounded-full bg-slate-900/60 backdrop-blur-md text-white hover:bg-slate-800"
-                title="Flip Camera"
-              >
-                <RotateCw className="w-4 h-4" />
-              </button>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                <Shield className="w-3.5 h-3.5" />
+                <span>{role === 'TEACHER' ? 'Faculty Custody Intake' : 'Found Item Intake'}</span>
+              </span>
+              <span className="text-[11px] font-semibold text-slate-300 bg-slate-800/80 px-2.5 py-0.5 rounded-full border border-slate-700">
+                Unbroken Chain of Custody
+              </span>
             </div>
-          </div>
 
-          {/* Live Video Viewfinder */}
-          <div
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            className={`flex-1 relative flex items-center justify-center overflow-hidden transition-colors ${
-              isDragging ? 'bg-indigo-950/60 ring-2 ring-indigo-500' : ''
-            }`}
-          >
-            {isDragging && (
-              <div className="absolute inset-0 z-30 bg-indigo-950/80 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center border-2 border-dashed border-indigo-400">
-                <ImageIcon className="w-12 h-12 text-indigo-300 animate-bounce mb-2" />
-                <p className="text-sm font-bold text-white">Drop photo to analyze with AI</p>
-                <p className="text-xs text-indigo-200 mt-1">MobileNetV2 feature extractor will run automatically</p>
+            <h2 className="text-xl sm:text-2xl font-black tracking-tight">
+              {reportType === 'FOUND'
+                ? (role === 'TEACHER' ? 'Campus Faculty Custody Intake' : 'Report Found Belonging')
+                : 'File Official Lost Report'}
+            </h2>
+            <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-xl">
+              {reportType === 'FOUND'
+                ? 'Add a photo and details of the item found on campus. AI auto-detects the object to help match with the owner.'
+                : 'Register details and description of your lost belonging so students and teachers can reach out.'}
+            </p>
+          </div>
+        )}
+
+        {/* Modal Body */}
+        {currentStep === 'DETAILS' && (
+          <div className="p-5 sm:p-6 space-y-4 overflow-y-auto flex-1 text-slate-900 dark:text-white">
+            {errorMessage && (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+                <span>{errorMessage}</span>
               </div>
             )}
 
-            {hasCameraAccess === false ? (
-              <div
-                className={`p-8 text-center text-white space-y-4 max-w-sm rounded-2xl border-2 border-dashed transition-colors ${
-                  isDragging ? 'border-indigo-400 bg-indigo-900/30' : 'border-slate-700 bg-slate-900/60'
-                }`}
-              >
-                <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center mx-auto text-indigo-400">
-                  <Camera className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold">Live Camera Unavailable</h3>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Camera permissions were not granted or device camera is in use. Drag & drop an image here or choose from your files:
-                  </p>
-                </div>
-                <label className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer shadow-md active:scale-95 transition-all">
-                  <ImageIcon className="w-4 h-4" />
-                  Choose from Files
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleGalleryUpload}
-                    className="hidden"
+            {/* 1. Photo Intake Section */}
+            {capturedPreview ? (
+              <div className="flex items-center justify-between p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <img
+                    src={capturedPreview}
+                    alt="Attached item"
+                    className="w-16 h-16 rounded-xl object-cover border border-slate-300 dark:border-slate-600 shrink-0 shadow-sm"
                   />
-                </label>
-                <p className="text-[10px] text-slate-500">Supports JPG, PNG, WEBP</p>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <span>Photo Attached</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                      {capturedFile ? `${capturedFile.name} (${((capturedFile.size) / 1024).toFixed(0)} KB)` : 'Item photo ready'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRetake}
+                  className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-900 transition-colors shrink-0 ml-2"
+                >
+                  Replace Photo
+                </button>
+              </div>
+            ) : showWebcam ? (
+              <div className="relative rounded-2xl overflow-hidden bg-black p-4 space-y-3 border border-slate-800 text-white">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold flex items-center gap-1.5">
+                    <Camera className="w-4 h-4 text-emerald-400" />
+                    Live Camera Viewfinder
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFacingMode((m) => (m === 'environment' ? 'user' : 'environment'))}
+                      className="p-1.5 rounded-lg bg-slate-800 text-white hover:bg-slate-700"
+                      title="Flip camera"
+                    >
+                      <RotateCw className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowWebcam(false)}
+                      className="p-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {hasCameraAccess === false ? (
+                  <div className="p-6 text-center text-white space-y-2">
+                    <p className="text-xs text-rose-300">Live camera permission denied or unavailable on this device.</p>
+                    <button
+                      type="button"
+                      onClick={() => setShowWebcam(false)}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 text-xs font-semibold hover:bg-slate-700"
+                    >
+                      Use File / Photo Upload Instead
+                    </button>
+                  </div>
+                ) : (
+                  <div className="relative rounded-xl overflow-hidden aspect-video bg-slate-950 flex items-center justify-center">
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                    <div className="absolute inset-4 border-2 border-dashed border-white/40 rounded-xl pointer-events-none" />
+                  </div>
+                )}
+
+                {hasCameraAccess !== false && (
+                  <div className="flex items-center justify-center gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleCaptureShutter}
+                      className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md active:scale-95 transition-all flex items-center gap-2"
+                    >
+                      <Camera className="w-4 h-4" />
+                      <span>Snap Photo</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowWebcam(false)}
+                      className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold hover:text-white"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
-              <>
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover"
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
+                  isDragging
+                    ? 'border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/30'
+                    : 'border-slate-300 dark:border-slate-700 hover:border-indigo-400 dark:hover:border-indigo-600 bg-slate-50/70 dark:bg-slate-800/40'
+                }`}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleGalleryUpload}
                 />
-
-                {/* Viewfinder Target Reticle */}
-                <div className="absolute inset-x-8 inset-y-24 border-2 border-white/50 rounded-2xl pointer-events-none flex flex-col justify-between p-4 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]">
-                  <div className="flex justify-between text-white/70">
-                    <div className="w-5 h-5 border-t-2 border-l-2 border-white rounded-tl" />
-                    <div className="w-5 h-5 border-t-2 border-r-2 border-white rounded-tr" />
+                <div className="space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 mx-auto flex items-center justify-center shadow-xs">
+                    <Camera className="w-6 h-6" />
                   </div>
-                  <div className="text-center text-[11px] font-semibold text-white/90 drop-shadow-md bg-black/40 px-3 py-1 rounded-full mx-auto backdrop-blur-xs">
-                    Keep the entire item in frame
-                  </div>
-                  <div className="flex justify-between text-white/70">
-                    <div className="w-5 h-5 border-b-2 border-l-2 border-white rounded-bl" />
-                    <div className="w-5 h-5 border-b-2 border-r-2 border-white rounded-br" />
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Bottom Shutter Action Bar */}
-          <div className="p-6 bg-gradient-to-t from-black to-transparent flex items-center justify-around z-20">
-            {/* Gallery Picker */}
-            <label className="w-12 h-12 rounded-full bg-slate-900/80 backdrop-blur-md flex items-center justify-center text-white border border-white/20 cursor-pointer active:scale-95 transition-transform">
-              <ImageIcon className="w-5 h-5" />
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleGalleryUpload}
-                className="hidden"
-              />
-            </label>
-
-            {/* Central Shutter Button */}
-            <button
-              onClick={handleCaptureShutter}
-              className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center p-1.5 active:scale-95 transition-transform shadow-2xl"
-              aria-label="Capture photo"
-            >
-              <div className="w-full h-full bg-white rounded-full hover:bg-slate-100 transition-colors" />
-            </button>
-
-            {/* Close / Skip button */}
-            <button
-              onClick={() => {
-                stopCamera();
-                setCurrentStep('DETAILS');
-              }}
-              className="text-xs font-semibold text-slate-300 hover:text-white px-3 py-1.5 rounded-lg bg-slate-900/60"
-            >
-              Skip Photo
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ---------------- STEP 3: AI ASSISTED ANALYSIS ---------------- */}
-      {currentStep === 'AI_ANALYSIS' && (
-        <div className="flex-1 flex flex-col justify-between p-5 max-w-md mx-auto w-full text-white overflow-y-auto">
-          {/* Header */}
-          <div className="flex items-center justify-between pb-3">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-purple-400" />
-              AI Visual Analysis
-            </span>
-            <button
-              onClick={handleRetake}
-              className="text-xs font-semibold text-slate-300 hover:text-white flex items-center gap-1"
-            >
-              <RotateCw className="w-3.5 h-3.5" /> Retake
-            </button>
-          </div>
-
-          {/* Image Preview with Scanning Overlay */}
-          <div className="relative rounded-2xl overflow-hidden border-2 border-purple-500/50 shadow-2xl bg-black aspect-4/3 flex items-center justify-center my-auto">
-            {capturedPreview && (
-              <img
-                src={capturedPreview}
-                alt="Captured"
-                className="w-full h-full object-cover"
-              />
-            )}
-            {isAnalyzing && (
-              <div className="absolute inset-0 bg-purple-950/40 backdrop-blur-xs flex flex-col items-center justify-center p-4">
-                <div className="w-10 h-10 border-3 border-purple-400 border-t-transparent rounded-full animate-spin mb-3" />
-                <span className="text-xs font-bold tracking-tight">Extracting 512-dim feature vector...</span>
-                <span className="text-[10px] text-purple-200 mt-0.5">Analyzing color histograms & edges</span>
-              </div>
-            )}
-          </div>
-
-          {/* AI Insights Card */}
-          {aiSuggestions && !isAnalyzing && (
-            <div className="space-y-4 my-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
-              <div className="bg-gradient-to-r from-purple-950 to-slate-900 border border-purple-400/40 p-4 rounded-2xl shadow-lg space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-purple-400 animate-ping" />
-                  <h3 className="text-sm font-bold text-white capitalize">
-                    {aiSuggestions.headline}
-                  </h3>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 text-xs text-slate-300 pt-1">
-                  <div className="bg-black/30 p-2 rounded-lg">
-                    <span className="text-[10px] text-purple-300 block uppercase font-bold">Category</span>
-                    <span className="font-semibold">{aiSuggestions.suggested_category_name}</span>
-                  </div>
-                  <div className="bg-black/30 p-2 rounded-lg">
-                    <span className="text-[10px] text-purple-300 block uppercase font-bold">Detected Color</span>
-                    <span className="font-semibold">{aiSuggestions.primary_color}</span>
-                  </div>
-                </div>
-
-                <p className="text-[11px] text-slate-400 leading-relaxed italic pt-1">
-                  "{aiSuggestions.suggested_description}"
-                </p>
-              </div>
-
-              {/* Actions */}
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setCurrentStep('DETAILS')}
-                  className="flex-1 py-3 px-4 rounded-xl bg-purple-600 hover:bg-purple-700 active:scale-98 text-white font-bold text-xs shadow-lg shadow-purple-600/30 flex items-center justify-center gap-1.5 transition-all"
-                >
-                  <Check className="w-4 h-4" />
-                  Looks Right (Proceed)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowOptionalFields(true);
-                    setCurrentStep('DETAILS');
-                  }}
-                  className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
-                >
-                  Edit Details
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ---------------- STEP 4: MINIMAL FORM DETAILS ---------------- */}
-      {currentStep === 'DETAILS' && (
-        <div className="flex-1 bg-white dark:bg-slate-900 text-slate-900 dark:text-white flex flex-col justify-between overflow-y-auto">
-          {/* Header */}
-          <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between sticky top-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md z-10">
-            <button
-              onClick={() => setCurrentStep(capturedPreview ? 'AI_ANALYSIS' : 'CAMERA')}
-              className="text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center gap-1"
-            >
-              &larr; Back
-            </button>
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
-              {reportType === 'LOST' ? 'Lost Item Details' : 'Found Item Details'}
-            </span>
-            <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-900 dark:hover:text-white">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {errorMessage && (
-            <div className="m-4 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
-              <span>{errorMessage}</span>
-            </div>
-          )}
-
-          {/* Form */}
-          <form onSubmit={handleFinalSubmit} className="p-5 space-y-4 max-w-md mx-auto w-full">
-            {/* Small photo thumbnail pill */}
-            {capturedPreview && (
-              <div className="flex items-center gap-3 p-2 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
-                <img
-                  src={capturedPreview}
-                  alt="Captured"
-                  className="w-12 h-12 rounded-lg object-cover border border-slate-300 dark:border-slate-600 shrink-0"
-                />
-                <div className="text-xs">
-                  <span className="font-bold text-slate-800 dark:text-slate-200">Photo Attached</span>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Scanned via MobileNetV2 Neural Network</p>
-                </div>
-              </div>
-            )}
-
-            {/* AI Auto-Detection Feedback Banner */}
-            {aiSuggestions && (
-              <div className="p-3 rounded-2xl bg-gradient-to-r from-purple-900/30 via-indigo-900/20 to-purple-900/30 border border-purple-500/30 flex items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
                   <div>
-                    <span className="font-bold text-slate-900 dark:text-white block">
-                      {aiSuggestions.headline || `AI Detected: ${aiSuggestions.suggested_item_name}`}
-                    </span>
-                    <span className="text-[10px] text-purple-600 dark:text-purple-300">
-                      Auto-filled below &bull; Modify any field before submitting
-                    </span>
+                    <div className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200">
+                      Take a photo or upload an image of the found item
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 max-w-sm mx-auto leading-relaxed">
+                      Choose from files, take a photo, or drag & drop here.
+                    </p>
                   </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        fileInputRef.current?.click();
+                      }}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs active:scale-95 transition-all"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Choose / Take Photo</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowWebcam(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-all"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>Use Live Webcam</span>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    Supports JPG, PNG, WEBP &bull; AI auto-detects object & fills details
+                  </p>
                 </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 shrink-0">
-                  Editable
+              </div>
+            )}
+
+            {/* Form */}
+            <form onSubmit={handleFinalSubmit} className="space-y-4 pt-1">
+
+            {/* Neutral Preparing Details Indicator */}
+            {isAnalyzing && (
+              <div className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs animate-pulse">
+                <div className="w-3.5 h-3.5 border-2 border-indigo-600 dark:border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                <span className="font-medium">Detecting object & preparing item details…</span>
+              </div>
+            )}
+
+            {/* Auto-detected notification badge */}
+            {ninjaDetectedLabel && !isAnalyzing && (
+              <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-xs text-indigo-900 dark:text-indigo-200 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span>
+                    Auto-detected: <strong>{ninjaDetectedLabel}</strong> ({Math.round((ninjaConfidence || 0) * 100)}% confidence)
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300 bg-white/70 dark:bg-slate-900/70 px-2 py-0.5 rounded-md">
+                  Autofilled
                 </span>
+              </div>
+            )}
+
+            {/* Teacher Alert Success Banner */}
+            {alertSuccess && (
+              <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200 flex items-start gap-2.5">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <div>
+                  <strong className="block text-sm font-bold">Custodian Alert Sent!</strong>
+                  <p className="mt-0.5">{alertSuccess}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Matching Items Found in Campus Custody */}
+            {foundMatches.length > 0 && !alertSuccess && (
+              <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 space-y-3">
+                <div className="flex items-center gap-2 text-xs font-bold text-amber-800 dark:text-amber-300">
+                  <Shield className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  <span>{foundMatches.length} Matching Item{foundMatches.length > 1 ? 's' : ''} Already in Campus Custody!</span>
+                </div>
+                <p className="text-xs text-amber-900/80 dark:text-amber-200/80">
+                  We found open recovered items matching your photo. Verify if this is your item:
+                </p>
+
+                <div className="space-y-2">
+                  {foundMatches.map((cand) => (
+                    <div
+                      key={cand.report_id}
+                      className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        {cand.primary_image_key ? (
+                          <img
+                            src={`/uploads/${cand.primary_image_key}`}
+                            alt={cand.item_name}
+                            className="w-12 h-12 rounded-lg object-cover border border-slate-200 dark:border-slate-700"
+                          />
+                        ) : (
+                          <div className="w-12 h-12 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400">
+                            <Package className="w-6 h-6" />
+                          </div>
+                        )}
+                        <div>
+                          <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                            <span>{cand.item_name}</span>
+                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+                              {Math.round(cand.confidence_score * 100)}% Match
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                            Custodian: <strong className="text-indigo-600 dark:text-indigo-400">{cand.handed_over_teacher_name || 'Faculty Staff'}</strong> • {cand.location_name}
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleAlertTeacherDirect(cand)}
+                        disabled={isAlerting}
+                        className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center gap-1.5 shrink-0"
+                      >
+                        <Send className="w-3 h-3" />
+                        <span>{isAlerting ? 'Alerting...' : 'Yes, This is Mine — Alert Teacher'}</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -746,22 +788,18 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
                   Campus Location *
                 </label>
-                <select
-                  value={locationId}
-                  onChange={(e) => setLocationId(Number(e.target.value))}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                <input
+                  type="text"
+                  value={locationName}
+                  onChange={(e) => setLocationName(e.target.value)}
+                  placeholder={reportType === 'LOST' ? 'Enter where the item was lost' : 'Enter where the item was found'}
+                  className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
                   required
-                >
-                  {locations.map((loc) => (
-                    <option key={loc.id} value={loc.id}>
-                      {loc.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
                   Date {reportType === 'LOST' ? 'Lost' : 'Found'} *
@@ -776,6 +814,19 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
               </div>
 
               <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                  Approx Time
+                </label>
+                <input
+                  type="text"
+                  value={approximateTime}
+                  onChange={(e) => setApproximateTime(e.target.value)}
+                  placeholder="e.g. 10:30 AM"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="col-span-2 sm:col-span-1">
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
                   Color
                 </label>
@@ -802,6 +853,24 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
               />
             </div>
 
+            <div className="p-3.5 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/80 space-y-1.5 shadow-xs">
+              <label className="flex items-center gap-1.5 text-xs font-bold text-indigo-950 dark:text-indigo-200 uppercase tracking-wider">
+                <Shield className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                <span>Teacher / Staff Handed To {reportType === 'FOUND' && <span className="text-rose-500">*</span>}</span>
+              </label>
+              <input
+                type="text"
+                value={handedOverTeacherName}
+                onChange={(e) => setHandedOverTeacherName(e.target.value)}
+                placeholder="e.g. Prof. Sharma (CSE), Lab Incharge, or Department Office"
+                required={reportType === 'FOUND'}
+                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-700 rounded-xl text-slate-900 dark:text-white placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500 shadow-xs"
+              />
+              <span className="text-[11px] text-indigo-800/80 dark:text-indigo-300 block">
+                Prime Custody Record: Specify which teacher, lab incharge, or faculty member received physical possession of the item.
+              </span>
+            </div>
+
             {/* Progressive Disclosure Toggle */}
             <div>
               <button
@@ -809,32 +878,21 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
                 onClick={() => setShowOptionalFields(!showOptionalFields)}
                 className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 flex items-center gap-1"
               >
-                <span>{showOptionalFields ? 'Hide optional fields' : '+ Add Brand, Specific Time & Distinguishing Marks'}</span>
+                <span>{showOptionalFields ? 'Hide optional details' : '+ Add Brand & Distinguishing Marks'}</span>
                 <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showOptionalFields ? 'rotate-180' : ''}`} />
               </button>
 
               {showOptionalFields && (
                 <div className="mt-3 p-3 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">Brand</label>
-                      <input
-                        type="text"
-                        value={brand}
-                        onChange={(e) => setBrand(e.target.value)}
-                        placeholder="e.g. Apple, Sony"
-                        className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-slate-900 dark:text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">Approx Time</label>
-                      <input
-                        type="time"
-                        value={approximateTime}
-                        onChange={(e) => setApproximateTime(e.target.value)}
-                        className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-slate-900 dark:text-white"
-                      />
-                    </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">Brand / Model</label>
+                    <input
+                      type="text"
+                      value={brand}
+                      onChange={(e) => setBrand(e.target.value)}
+                      placeholder="e.g. Apple, Sony, Nike"
+                      className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-slate-900 dark:text-white"
+                    />
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">Distinguishing Features</label>
@@ -914,7 +972,7 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
                 className="w-full py-3 px-4 rounded-xl text-white font-bold text-xs shadow-md bg-indigo-600 hover:bg-indigo-700 active:scale-98 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {isSubmitting ? (
-                  'Submitting & Running AI Matching...'
+                  'Submitting Report...'
                 ) : (
                   <>
                     <CheckCircle2 className="w-4 h-4" />
@@ -927,7 +985,7 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
         </div>
       )}
 
-      {/* ---------------- STEP 5: SUCCESS CONFIRMATION ---------------- */}
+      {/* ---------------- STEP 4: SUCCESS CONFIRMATION ---------------- */}
       {currentStep === 'SUCCESS' && submittedReport && (
         <div className="flex-1 bg-slate-900 text-white p-6 flex flex-col justify-between max-w-md mx-auto w-full animate-in zoom-in-95 duration-200">
           <div className="text-right">
@@ -944,7 +1002,7 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
             <div>
               <h2 className="text-2xl font-black tracking-tight">Report Submitted</h2>
               <p className="text-xs text-slate-300 mt-1 max-w-xs mx-auto leading-relaxed">
-                CampusTrace is actively comparing your item's computer vision embedding with campus records.
+                Your report has been submitted. Any potential matches will appear on the report details page.
               </p>
             </div>
 
@@ -971,8 +1029,8 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
               }}
               className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md transition-colors flex items-center justify-center gap-1.5"
             >
-              <Sparkles className="w-4 h-4 text-purple-300" />
-              Check Potential AI Matches
+              <CheckCircle2 className="w-4 h-4 text-white" />
+              View Report Details
             </button>
 
             <button
@@ -990,4 +1048,7 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
       </div>
     </div>
   );
+
+  return createPortal(modalContent, document.body);
 };
+

@@ -168,7 +168,7 @@ export const ProfilePage: React.FC = () => {
   // Activity stats calculation
   const lostCount = userReports.filter(r => r.report_type === 'LOST').length;
   const foundCount = userReports.filter(r => r.report_type === 'FOUND').length;
-  const resolvedCount = userReports.filter(r => r.status === 'RETURNED' || r.status === 'CLOSED').length;
+  const resolvedCount = userReports.filter(r => r.status === 'RETURNED').length;
   const activeCount = userReports.length - resolvedCount;
   const unreadCount = notifications.filter(n => !n.is_read).length;
 

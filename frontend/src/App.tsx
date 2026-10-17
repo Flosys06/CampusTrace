@@ -12,7 +12,6 @@ import { ListingsPage } from './pages/ListingsPage';
 import { MyReportsPage } from './pages/MyReportsPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { ReportDetailPage } from './pages/ReportDetailPage';
-import { MatchesPage } from './pages/MatchesPage';
 import { ClaimsPage } from './pages/ClaimsPage';
 import { CustodyPage } from './pages/CustodyPage';
 import { AdminPage } from './pages/AdminPage';
@@ -78,7 +77,6 @@ export const AppContent: React.FC = () => {
     if (path === '/') title = 'CampusTrace — Home';
     else if (path === '/listings') title = 'CampusTrace — Explore';
     else if (path === '/my-reports') title = 'CampusTrace — My Reports';
-    else if (path === '/matches') title = 'CampusTrace — Potential Matches';
     else if (path === '/claims') title = 'CampusTrace — Ownership Claims';
     else if (path === '/custody') title = 'CampusTrace — Custody Queue';
     else if (path === '/admin') title = 'CampusTrace — Admin Dashboard';
@@ -144,14 +142,10 @@ export const AppContent: React.FC = () => {
         }
       />
 
-      {/* Matches View */}
+      {/* AI Matching Removed - Redirect /matches to /listings */}
       <Route
         path="/matches"
-        element={
-          <ProtectedLayout>
-            <MatchesPage />
-          </ProtectedLayout>
-        }
+        element={<Navigate to="/listings" replace />}
       />
 
       {/* Claims View */}

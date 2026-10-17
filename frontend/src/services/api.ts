@@ -17,7 +17,12 @@ import {
   ItemImage,
   College,
   RegisterRequest,
-  UserProfileUpdate
+  UserProfileUpdate,
+  NinjaDetectionResult,
+  NinjaDetectionStatus,
+  ScanMatchResponse,
+  AlertTeacherRequest,
+  AlertTeacherResponse
 } from '../types';
 
 const API_BASE = '/api';
@@ -173,7 +178,9 @@ export const api = {
     report_type: 'LOST' | 'FOUND';
     item_name: string;
     category_id: number;
-    location_id: number;
+    location_id?: number;
+    location_name?: string;
+    manual_campus_location?: string;
     report_date: string;
     approximate_event_time?: string;
     detailed_description: string;
@@ -229,15 +236,10 @@ export const api = {
   getReportMatches: (reportId: number): Promise<Match[]> =>
     request<Match[]>(`/reports/${reportId}/matches`),
 
-  closeReport: (reportId: number, data: { reason: string; notes?: string }): Promise<Report> =>
-    request<Report>(`/reports/${reportId}/close`, {
+  closeReport: (reportId: number, data: { reason: string; notes?: string }): Promise<{ message: string; id: number; report_number: string; status: string }> =>
+    request<{ message: string; id: number; report_number: string; status: string }>(`/reports/${reportId}/close`, {
       method: 'POST',
       body: JSON.stringify(data),
-    }),
-
-  reopenReport: (reportId: number): Promise<Report> =>
-    request<Report>(`/reports/${reportId}/reopen`, {
-      method: 'POST',
     }),
 
   // Matches
@@ -354,4 +356,32 @@ export const api = {
     return request<AuditLog[]>(`/admin/audit-logs?${params.toString()}`);
   },
   getModelHealth: (): Promise<ModelHealth> => request<ModelHealth>('/admin/model-health'),
+
+  // API Ninjas Object Detection
+  getNinjaDetectionStatus: (): Promise<NinjaDetectionStatus> =>
+    request<NinjaDetectionStatus>('/detection/status'),
+
+  ninjaDetectObjects: (file: File): Promise<NinjaDetectionResult> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return request<NinjaDetectionResult>('/detection/ninja-detect', {
+      method: 'POST',
+      body: formData,
+    });
+  },
+
+  scanFoundMatches: (file: File): Promise<ScanMatchResponse> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return request<ScanMatchResponse>('/detection/scan-found-matches', {
+      method: 'POST',
+      body: formData,
+    });
+  },
+
+  alertTeacher: (data: AlertTeacherRequest): Promise<AlertTeacherResponse> =>
+    request<AlertTeacherResponse>('/detection/alert-teacher', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 };

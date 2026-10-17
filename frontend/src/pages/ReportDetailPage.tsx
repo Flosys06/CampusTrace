@@ -2,28 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Shield,
-  MapPin,
-  Calendar,
-  Clock,
-  Sparkles,
-  UserCheck,
   FileCheck,
-  ShieldAlert,
   ArrowLeft,
-  Package,
-  Layers,
   CheckCircle2,
   AlertCircle,
   Lock,
-  ExternalLink,
-  ChevronRight,
-  Upload,
-  XCircle,
-  RotateCcw
+  Trash2
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
-import { Report, Match, CustodyRecord, Claim, StorageLocation, User } from '../types';
+import { Report, CustodyRecord, Claim, StorageLocation } from '../types';
 import { StatusBadge } from '../components/common/StatusBadge';
 
 export const ReportDetailPage: React.FC = () => {
@@ -33,7 +21,6 @@ export const ReportDetailPage: React.FC = () => {
   const navigate = useNavigate();
 
   const [report, setReport] = useState<Report | null>(null);
-  const [matches, setMatches] = useState<Match[]>([]);
   const [custodyHistory, setCustodyHistory] = useState<CustodyRecord[]>([]);
   const [storageLocations, setStorageLocations] = useState<StorageLocation[]>([]);
   const [reportClaims, setReportClaims] = useState<Claim[]>([]);
@@ -58,12 +45,11 @@ export const ReportDetailPage: React.FC = () => {
   const [verificationMethod, setVerificationMethod] = useState('STUDENT_ID_CARD');
   const [returnNotes, setReturnNotes] = useState('');
 
-  // Close / Reopen report modal state
+  // Close / Delete report modal state
   const [showCloseModal, setShowCloseModal] = useState(false);
-  const [closeReason, setCloseReason] = useState('No longer needed');
+  const [closeReason, setCloseReason] = useState('Item resolved / found elsewhere');
   const [closeNotes, setCloseNotes] = useState('');
   const [closeSubmitting, setCloseSubmitting] = useState(false);
-  const [reopenSubmitting, setReopenSubmitting] = useState(false);
 
   const loadData = async () => {
     if (!id) return;
@@ -72,11 +58,9 @@ export const ReportDetailPage: React.FC = () => {
       const rep = await api.getReportDetail(Number(id));
       setReport(rep);
 
-      const [matchesRes, historyRes] = await Promise.all([
-        api.getReportMatches(Number(id)),
-        role !== 'STUDENT' ? api.getCustodyHistory(Number(id)).catch(() => []) : Promise.resolve([]),
-      ]);
-      setMatches(matchesRes);
+      const historyRes = role !== 'STUDENT'
+        ? await api.getCustodyHistory(Number(id)).catch(() => [])
+        : [];
       setCustodyHistory(historyRes);
 
       if (role === 'TEACHER' || role === 'ADMIN') {
@@ -176,26 +160,12 @@ export const ReportDetailPage: React.FC = () => {
         notes: closeNotes.trim() || undefined,
       });
       setShowCloseModal(false);
-      await loadData();
+      alert(`Report #${report.report_number} has been permanently closed and removed.`);
+      navigate('/listings');
     } catch (err: any) {
       alert(err.message || 'Failed to close report');
     } finally {
       setCloseSubmitting(false);
-    }
-  };
-
-  const handleReopenSubmit = async () => {
-    if (!report) return;
-    if (!window.confirm('Reopen this report? It will become active again in campus searches and AI matching.')) return;
-
-    setReopenSubmitting(true);
-    try {
-      await api.reopenReport(report.id);
-      await loadData();
-    } catch (err: any) {
-      alert(err.message || 'Failed to reopen report');
-    } finally {
-      setReopenSubmitting(false);
     }
   };
 
@@ -229,8 +199,7 @@ export const ReportDetailPage: React.FC = () => {
     user?.id === report.reported_lost_by_student_id ||
     user?.id === report.reported_found_by_student_id;
 
-  const canClose = report.status !== 'RETURNED' && report.status !== 'CLOSED' && (isTeacherOrAdmin || isOwner);
-  const canReopen = report.status === 'CLOSED' && (isTeacherOrAdmin || isOwner);
+  const canClose = report.status !== 'RETURNED' && (isTeacherOrAdmin || isOwner);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-150">
@@ -303,23 +272,11 @@ export const ReportDetailPage: React.FC = () => {
                 {canClose && (
                   <button
                     onClick={() => setShowCloseModal(true)}
-                    className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 text-xs font-bold transition-colors flex items-center gap-1.5"
-                    title="Close this report"
+                    className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 text-xs font-bold transition-colors flex items-center gap-1.5"
+                    title="Close and permanently remove this report"
                   >
-                    <XCircle className="w-4 h-4 text-slate-500" />
-                    Close Report
-                  </button>
-                )}
-
-                {canReopen && (
-                  <button
-                    onClick={handleReopenSubmit}
-                    disabled={reopenSubmitting}
-                    className="px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                    title="Reopen this report"
-                  >
-                    <RotateCcw className={`w-4 h-4 text-blue-600 ${reopenSubmitting ? 'animate-spin' : ''}`} />
-                    {reopenSubmitting ? 'Reopening...' : 'Reopen Report'}
+                    <Trash2 className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                    Close & Remove Report
                   </button>
                 )}
               </div>
@@ -327,31 +284,6 @@ export const ReportDetailPage: React.FC = () => {
 
             {/* Photo & Characteristics */}
             <div className="p-5 sm:p-6 space-y-6">
-              {/* Closed Report Notice */}
-              {report.status === 'CLOSED' && (
-                <div className="p-4 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-300 dark:border-slate-700 flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-slate-500 dark:text-slate-400 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                        This report is closed
-                      </span>
-                      {report.resolved_at && (
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                          ({new Date(report.resolved_at).toLocaleDateString()})
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-600 dark:text-slate-400">
-                      Reason: <strong className="text-slate-800 dark:text-slate-200">{report.resolution_type || 'Resolved'}</strong>
-                      {report.resolution_notes && ` — "${report.resolution_notes}"`}
-                    </p>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Closed reports do not appear in active student searches or generate new AI matches.
-                    </p>
-                  </div>
-                </div>
-              )}
               {primaryImage && (
                 <div className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-900/5 dark:bg-slate-950/40 max-h-96 flex items-center justify-center">
                   <img
@@ -363,10 +295,14 @@ export const ReportDetailPage: React.FC = () => {
               )}
 
               {/* Attributes Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 dark:bg-slate-800/60 p-4 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 bg-slate-50 dark:bg-slate-800/60 p-4 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
                 <div>
                   <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Category</span>
                   <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{report.item?.category?.name || 'Uncategorized'}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Location</span>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{report.manual_campus_location || report.location?.name || 'Campus'}</span>
                 </div>
                 <div>
                   <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Color</span>
@@ -380,7 +316,28 @@ export const ReportDetailPage: React.FC = () => {
                   <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Date Event</span>
                   <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{new Date(report.report_date).toLocaleDateString()}</span>
                 </div>
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Approx Time</span>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{report.approximate_event_time || 'Not specified'}</span>
+                </div>
               </div>
+
+              {/* Handed Over To Teacher Banner */}
+              {report.handed_over_teacher_name && (
+                <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl border border-emerald-200 dark:border-emerald-800 flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                    <Shield className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400 block tracking-wider">
+                      Teacher / Staff Member Handed To
+                    </span>
+                    <span className="text-sm font-bold text-emerald-950 dark:text-emerald-100">
+                      {report.handed_over_teacher_name}
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* Description */}
               <div>
@@ -415,11 +372,15 @@ export const ReportDetailPage: React.FC = () => {
                     <span className="text-slate-500 dark:text-slate-400 block text-[11px]">{report.creator?.institutional_id}</span>
                   </div>
 
-                  {report.receiving_teacher && (
+                  {(report.handed_over_teacher_name || report.receiving_teacher) && (
                     <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl border border-emerald-200 dark:border-emerald-800">
-                      <span className="text-[10px] text-emerald-700 dark:text-emerald-400 block uppercase font-bold">Receiving Faculty Member</span>
-                      <span className="font-semibold text-emerald-950 dark:text-emerald-200">{report.receiving_teacher.full_name}</span>
-                      <span className="text-emerald-700 dark:text-emerald-400 block text-[11px]">{report.receiving_teacher.department}</span>
+                      <span className="text-[10px] text-emerald-700 dark:text-emerald-400 block uppercase font-bold">Faculty Member Handed To</span>
+                      <span className="font-semibold text-emerald-950 dark:text-emerald-200">
+                        {report.handed_over_teacher_name || report.receiving_teacher?.full_name}
+                      </span>
+                      {report.receiving_teacher?.department && (
+                        <span className="text-emerald-700 dark:text-emerald-400 block text-[11px]">{report.receiving_teacher.department}</span>
+                      )}
                     </div>
                   )}
 
@@ -436,62 +397,61 @@ export const ReportDetailPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Column: AI Matches & Custody Timeline */}
+        {/* Right Column: Custody Status & Accountability */}
         <div className="space-y-6">
-          {/* AI Matches Box */}
+          {/* Custody & Case Status Card */}
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
-            <div className="p-4 bg-purple-50/80 dark:bg-purple-950/40 border-b border-purple-100 dark:border-purple-900/50 flex items-center justify-between">
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                <h3 className="text-xs font-bold text-purple-950 dark:text-purple-300 uppercase tracking-wider">
-                  AI Potential Matches ({matches.length})
+                <Shield className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                <h3 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider">
+                  Custody & Status
                 </h3>
               </div>
-              <Link to="/matches" className="text-[11px] font-semibold text-purple-700 dark:text-purple-400 hover:text-purple-900 dark:hover:text-purple-300">
-                View Studio &rarr;
-              </Link>
+              <StatusBadge status={report.status} size="sm" />
             </div>
 
-            <div className="p-3 divide-y divide-slate-100 dark:divide-slate-800 max-h-80 overflow-y-auto">
-              {matches.length === 0 ? (
-                <div className="p-6 text-center text-slate-400 dark:text-slate-500 text-xs">
-                  No similar items detected above the 45% confidence threshold yet.
-                </div>
-              ) : (
-                matches.map((m) => {
-                  const targetReport = report.report_type === 'LOST' ? m.found_report_summary : m.lost_report_summary;
-                  const pct = Math.round(m.similarity_score * 100);
-                  return (
-                    <div key={m.id} className="py-2.5 px-2 flex items-center justify-between gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/60 rounded-xl transition-colors">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
-                            pct >= 70
-                              ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
-                              : 'bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300'
-                          }`}>
-                            {pct}% Match
-                          </span>
-                          <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
-                            {targetReport?.item_name || 'Item'}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                          {m.matching_features?.summary || 'Visual and category alignment'}
-                        </p>
-                      </div>
+            <div className="p-4 space-y-3 text-xs">
+              <div>
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wider font-bold block">
+                  Current Lifecycle
+                </span>
+                <span className="font-semibold text-slate-800 dark:text-slate-200">
+                  {report.status === 'OPEN'
+                    ? 'Open Report • Listed in campus directory'
+                    : report.status === 'PENDING_HANDOVER'
+                    ? 'Pending Handover • Awaiting physical surrender to staff'
+                    : report.status === 'IN_CUSTODY'
+                    ? 'In Official Custody • Safely secured in campus vault'
+                    : report.status === 'CLAIM_PENDING'
+                    ? 'Claim Under Review • Verification in progress'
+                    : report.status === 'RETURNED'
+                    ? 'Returned to Owner • Case resolved'
+                    : 'Closed & Archived'}
+                </span>
+              </div>
 
-                      <Link
-                        to={`/reports/${report.report_type === 'LOST' ? m.found_report_id : m.lost_report_id}`}
-                        className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 shrink-0"
-                        title="Compare Report"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </Link>
-                    </div>
-                  );
-                })
+              {(report.handed_over_teacher_name || report.receiving_teacher) && (
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wider font-bold block">
+                    Teacher / Staff Member Handed To
+                  </span>
+                  <span className="font-bold text-emerald-700 dark:text-emerald-400 block mt-0.5">
+                    {report.handed_over_teacher_name || report.receiving_teacher?.full_name}
+                  </span>
+                  {report.receiving_teacher?.department && (
+                    <span className="text-slate-500 dark:text-slate-400 text-[11px] block">
+                      {report.receiving_teacher.department}
+                    </span>
+                  )}
+                </div>
               )}
+
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 space-y-1 leading-relaxed">
+                <p>
+                  Belongings are managed under strict campus custody guidelines. To claim this item or confirm its recovery, present institutional ID to faculty staff.
+                </p>
+              </div>
             </div>
           </div>
 
@@ -760,28 +720,31 @@ export const ReportDetailPage: React.FC = () => {
         </div>
       )}
 
-      {/* MODAL 4: Close Report Confirmation */}
+      {/* MODAL 4: Close & Permanently Remove Report */}
       {showCloseModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-100">
           <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4">
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                <XCircle className="w-5 h-5 text-slate-600 dark:text-slate-400" />
+              <div className="w-9 h-9 rounded-xl bg-rose-50 dark:bg-rose-950/50 flex items-center justify-center text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
+                <Trash2 className="w-5 h-5" />
               </div>
               <div>
                 <h3 className="text-sm font-bold text-slate-900 dark:text-white">Close Report #{report.report_number}</h3>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">Confirm resolution and update status</p>
+                <p className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Entirely and permanently removes this report</p>
               </div>
             </div>
 
-            <p className="text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-200 dark:border-slate-700 leading-relaxed">
-              Close this report? This report will no longer appear in active lost and found searches or generate new match suggestions. You can still view its history.
-            </p>
+            <div className="text-xs text-rose-700 dark:text-rose-300 bg-rose-50/80 dark:bg-rose-950/40 p-3.5 rounded-xl border border-rose-200 dark:border-rose-800/80 leading-relaxed space-y-1">
+              <p className="font-bold">Permanent Deletion Notice:</p>
+              <p>
+                Closing this report will entirely remove it and its photos from CampusTrace. It will not be retained in search records or history, and <strong>cannot be reopened</strong>.
+              </p>
+            </div>
 
             <form onSubmit={handleCloseSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Reason for Closure *
+                  Reason for Removal *
                 </label>
                 <select
                   value={closeReason}
@@ -789,9 +752,10 @@ export const ReportDetailPage: React.FC = () => {
                   className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
                   required
                 >
+                  <option value="Item resolved / found elsewhere">Item resolved / found elsewhere</option>
                   <option value="No longer needed">No longer needed</option>
-                  <option value="Item found elsewhere">Item found elsewhere</option>
                   <option value="Duplicate report">Duplicate report</option>
+                  <option value="Filed by mistake">Filed by mistake</option>
                   <option value="Other">Other</option>
                 </select>
               </div>
@@ -804,7 +768,7 @@ export const ReportDetailPage: React.FC = () => {
                   rows={2}
                   value={closeNotes}
                   onChange={(e) => setCloseNotes(e.target.value)}
-                  placeholder="Provide context or details about the closure..."
+                  placeholder="Provide context or details about the removal..."
                   className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
                 />
               </div>
@@ -820,9 +784,10 @@ export const ReportDetailPage: React.FC = () => {
                 <button
                   type="submit"
                   disabled={closeSubmitting}
-                  className="px-5 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 text-white text-xs font-bold transition-colors disabled:opacity-50"
+                  className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-colors disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  {closeSubmitting ? 'Closing...' : 'Confirm & Close Report'}
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {closeSubmitting ? 'Permanently Removing...' : 'Confirm & Permanently Remove'}
                 </button>
               </div>
             </form>

@@ -20,7 +20,7 @@ interface BottomNavProps {
 export const BottomNav: React.FC<BottomNavProps> = ({ onOpenReportFlow: propOnOpen }) => {
   const { role } = useAuth();
   const { openReportFlow } = useReportFlow();
-  const onOpenReportFlow = propOnOpen || (() => openReportFlow('LOST'));
+  const onOpenReportFlow = propOnOpen || (() => openReportFlow('FOUND'));
 
   const getNavLinkClass = ({ isActive }: { isActive: boolean }) =>
     `flex flex-col items-center justify-center flex-1 py-1 transition-colors ${

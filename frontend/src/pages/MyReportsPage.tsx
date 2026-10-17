@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Layers,
-  Sparkles,
   MapPin,
   Calendar,
   Clock,
@@ -21,11 +20,10 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
-import { Report, Claim, Match, CustodyRecord } from '../types';
+import { Report, Claim, CustodyRecord } from '../types';
 import { StatusBadge } from '../components/common/StatusBadge';
 
 interface ExpandedTimelineData {
-  matches: Match[];
   custody: CustodyRecord[];
   claims: Claim[];
   loading: boolean;
@@ -70,25 +68,22 @@ export const MyReportsPage: React.FC<{ onOpenReportFlow?: () => void }> = ({ onO
     }
     setExpandedReportId(reportId);
 
-    // If we haven't loaded timeline data yet for this report, fetch matches and custody
+    // If we haven't loaded timeline data yet for this report, fetch custody
     if (!timelineData[reportId]) {
       setTimelineData(prev => ({
         ...prev,
-        [reportId]: { matches: [], custody: [], claims: [], loading: true }
+        [reportId]: { custody: [], claims: [], loading: true }
       }));
       try {
-        const [matchRes, custRes] = await Promise.all([
-          api.getReportMatches(reportId).catch(() => []),
-          api.getCustodyHistory(reportId).catch(() => []),
-        ]);
+        const custRes = await api.getCustodyHistory(reportId).catch(() => []);
         setTimelineData(prev => ({
           ...prev,
-          [reportId]: { matches: matchRes, custody: custRes, claims: [], loading: false }
+          [reportId]: { custody: custRes, claims: [], loading: false }
         }));
       } catch {
         setTimelineData(prev => ({
           ...prev,
-          [reportId]: { matches: [], custody: [], claims: [], loading: false }
+          [reportId]: { custody: [], claims: [], loading: false }
         }));
       }
     }
@@ -106,7 +101,7 @@ export const MyReportsPage: React.FC<{ onOpenReportFlow?: () => void }> = ({ onO
         <div>
           <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">My Items</h1>
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-0.5">
-            Track submitted reports, AI matches, and recovery status
+            Track submitted reports, custody handover, and recovery status
           </p>
         </div>
         {onOpenReportFlow && (
@@ -330,40 +325,34 @@ export const MyReportsPage: React.FC<{ onOpenReportFlow?: () => void }> = ({ onO
                               </div>
                             </div>
 
-                            {/* 2. Image Processed & Vision Embedding */}
+                            {/* 2. Image Analyzed via Computer Vision */}
                             {report.images.length > 0 && (
                               <div className="relative">
                                 <div className="absolute -left-6 top-1 w-5 h-5 rounded-full bg-indigo-100 dark:bg-indigo-950/60 border-2 border-indigo-500 flex items-center justify-center text-indigo-600">
-                                  <Sparkles className="w-3 h-3" />
+                                  <Package className="w-3 h-3" />
                                 </div>
                                 <div>
-                                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">Image Processed</h4>
+                                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">Photo Attached & Analyzed</h4>
                                   <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                                    512-dim OpenCV vision embedding & color histogram indexed
+                                    Object visual attributes classified via on-device vision
                                   </p>
                                 </div>
                               </div>
                             )}
 
-                            {/* 3. AI Matches Found (if any) */}
-                            {repTimeline && repTimeline.matches.length > 0 && (
+                            {/* 3. Teacher Handover Recorded */}
+                            {report.handed_over_teacher_name && (
                               <div className="relative">
-                                <div className="absolute -left-6 top-1 w-5 h-5 rounded-full bg-purple-100 dark:bg-purple-950/60 border-2 border-purple-500 flex items-center justify-center text-purple-600">
-                                  <Sparkles className="w-3 h-3" />
+                                <div className="absolute -left-6 top-1 w-5 h-5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 border-2 border-emerald-500 flex items-center justify-center text-emerald-600">
+                                  <CheckCircle2 className="w-3 h-3" />
                                 </div>
                                 <div>
-                                  <h4 className="text-xs font-bold text-purple-900 dark:text-purple-300">
-                                    {repTimeline.matches.length} AI Match{repTimeline.matches.length > 1 ? 'es' : ''} Identified
+                                  <h4 className="text-xs font-bold text-emerald-900 dark:text-emerald-300">
+                                    Handed to Faculty / Staff
                                   </h4>
                                   <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                                    Top match score: {Math.round(repTimeline.matches[0].similarity_score * 100)}%
+                                    Entrusted to faculty member: <strong className="font-semibold text-slate-700 dark:text-slate-200">{report.handed_over_teacher_name}</strong>
                                   </p>
-                                  <Link
-                                    to={`/reports/${report.id}`}
-                                    className="text-[10px] font-bold text-purple-700 dark:text-purple-400 underline mt-0.5 inline-block"
-                                  >
-                                    Review matching items &rarr;
-                                  </Link>
                                 </div>
                               </div>
                             )}

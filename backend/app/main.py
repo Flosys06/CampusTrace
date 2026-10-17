@@ -19,6 +19,7 @@ from app.api.returns import router as returns_router
 from app.api.notifications import router as notifications_router
 from app.api.admin import router as admin_router
 from app.api.colleges import router as colleges_router
+from app.api.ninja_detection import router as ninja_detection_router
 
 # Initialize Database tables
 Base.metadata.create_all(bind=engine)
@@ -59,6 +60,7 @@ app.include_router(custody_router, prefix=api_prefix)
 app.include_router(returns_router, prefix=api_prefix)
 app.include_router(notifications_router, prefix=api_prefix)
 app.include_router(admin_router, prefix=api_prefix)
+app.include_router(ninja_detection_router, prefix=api_prefix)
 
 @app.get("/")
 def root():

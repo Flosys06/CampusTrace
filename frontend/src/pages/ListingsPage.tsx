@@ -3,24 +3,20 @@ import { Link } from 'react-router-dom';
 import {
   Search,
   Filter,
-  Sparkles,
+  UserCheck,
   MapPin,
   Calendar,
   Package,
   Layers,
   ChevronLeft,
   ChevronRight,
-  PlusCircle,
-  Camera,
   Tag
 } from 'lucide-react';
 import { api } from '../services/api';
-import { useReportFlow } from '../context/ReportFlowContext';
 import { Report, Category, CampusLocation, ReportType, ReportStatus } from '../types';
 import { StatusBadge } from '../components/common/StatusBadge';
 
 export const ListingsPage: React.FC = () => {
-  const { openReportFlow } = useReportFlow();
   const [reports, setReports] = useState<Report[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [locations, setLocations] = useState<CampusLocation[]>([]);
@@ -99,25 +95,6 @@ export const ListingsPage: React.FC = () => {
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
             Search active lost and found belongings across campus classrooms, libraries, and facilities.
           </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => openReportFlow('LOST')}
-            className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors active:scale-95"
-            title="Report a lost belonging with camera"
-          >
-            <Camera className="w-3.5 h-3.5" />
-            <span>Report Lost</span>
-          </button>
-          <button
-            onClick={() => openReportFlow('FOUND')}
-            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors active:scale-95"
-            title="Register a found item"
-          >
-            <PlusCircle className="w-3.5 h-3.5" />
-            <span>Report Found</span>
-          </button>
         </div>
       </div>
 
@@ -235,7 +212,6 @@ export const ListingsPage: React.FC = () => {
               <option value="PENDING_HANDOVER">Pending Handover</option>
               <option value="CLAIM_PENDING">Claim Under Review</option>
               <option value="RETURNED">Returned to Owner</option>
-              <option value="CLOSED">Closed Reports</option>
             </select>
           </div>
         </div>
@@ -308,11 +284,11 @@ export const ListingsPage: React.FC = () => {
                     <StatusBadge status={rep.status} size="sm" />
                   </div>
 
-                  {/* AI matches count pill */}
-                  {rep.matches_count !== undefined && rep.matches_count > 0 && (
-                    <div className="absolute bottom-2.5 right-2.5 bg-slate-900/80 backdrop-blur-md text-white text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
-                      <Sparkles className="w-3 h-3 text-purple-400" />
-                      <span>{rep.matches_count} AI Match{rep.matches_count > 1 ? 'es' : ''}</span>
+                  {/* Teacher Handover Badge */}
+                  {rep.handed_over_teacher_name && (
+                    <div className="absolute bottom-2.5 left-2.5 right-2.5 bg-slate-900/85 backdrop-blur-md text-white text-[10px] font-medium px-2 py-0.5 rounded-md flex items-center gap-1.5 shadow-xs truncate">
+                      <UserCheck className="w-3 h-3 text-emerald-400 shrink-0" />
+                      <span className="truncate">Handed to: <strong className="font-semibold text-emerald-300">{rep.handed_over_teacher_name}</strong></span>
                     </div>
                   )}
                 </div>
@@ -339,9 +315,9 @@ export const ListingsPage: React.FC = () => {
                   </div>
 
                   <div className="pt-3 mt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                    <span className="flex items-center gap-1 truncate max-w-[160px]" title={rep.location?.name}>
+                    <span className="flex items-center gap-1 truncate max-w-[160px]" title={rep.manual_campus_location || rep.location?.name || 'Campus'}>
                       <MapPin className="w-3 h-3 shrink-0 text-slate-400" />
-                      {rep.location?.name || 'Campus'}
+                      {rep.manual_campus_location || rep.location?.name || 'Campus'}
                     </span>
                     <span className="flex items-center gap-1 whitespace-nowrap">
                       <Calendar className="w-3 h-3 text-slate-400" />

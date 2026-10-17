@@ -11,7 +11,10 @@ class ReportCreate(BaseModel):
     report_type: ReportType
     item_name: str
     category_id: int
-    location_id: int
+    location_id: Optional[int] = None
+    location_name: Optional[str] = None
+    manual_campus_location: Optional[str] = None
+    handed_over_teacher_name: Optional[str] = None
     report_date: date
     approximate_event_time: Optional[str] = None
     detailed_description: str
@@ -34,6 +37,9 @@ class ReportUpdate(BaseModel):
     priority: Optional[ReportPriority] = None
     detailed_description: Optional[str] = None
     location_id: Optional[int] = None
+    location_name: Optional[str] = None
+    manual_campus_location: Optional[str] = None
+    handed_over_teacher_name: Optional[str] = None
     approximate_event_time: Optional[str] = None
 
 class ReportCloseRequest(BaseModel):
@@ -50,6 +56,8 @@ class ReportResponse(BaseModel):
     report_date: date
     approximate_event_time: Optional[str] = None
     detailed_description: str
+    manual_campus_location: Optional[str] = None
+    handed_over_teacher_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     resolved_at: Optional[datetime] = None
@@ -62,7 +70,7 @@ class ReportResponse(BaseModel):
     reported_found_by_student_id: Optional[int] = None
     created_by_user_id: int
     received_by_teacher_id: Optional[int] = None
-    location_id: int
+    location_id: Optional[int] = None
     
     # Associated Entities
     college: Optional[CollegeBrief] = None

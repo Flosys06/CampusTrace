@@ -28,8 +28,24 @@ def generate_report_number(db: Session, report_type: ReportType) -> str:
     """Generates unique human-readable report number (e.g., TRC-L-2026-0042)."""
     prefix = "L" if report_type == ReportType.LOST else "F"
     current_year = datetime.now(timezone.utc).year
-    count = db.query(Report).filter(Report.report_type == report_type).count() + 1
-    return f"TRC-{prefix}-{current_year}-{count:04d}"
+    base_prefix = f"TRC-{prefix}-{current_year}-"
+    existing_reports = db.query(Report.report_number).filter(
+        Report.report_number.like(f"{base_prefix}%")
+    ).all()
+    max_num = 0
+    for (rep_num,) in existing_reports:
+        try:
+            seq = int(rep_num.split("-")[-1])
+            if seq > max_num:
+                max_num = seq
+        except (ValueError, IndexError):
+            pass
+    next_num = max_num + 1
+    report_num = f"{base_prefix}{next_num:04d}"
+    while db.query(Report).filter(Report.report_number == report_num).first() is not None:
+        next_num += 1
+        report_num = f"{base_prefix}{next_num:04d}"
+    return report_num
 
 @router.post("", response_model=ReportResponse)
 def create_report(
@@ -76,6 +92,32 @@ def create_report(
             detail="Your account is not associated with an institution. Please update your profile or contact administrator."
         )
 
+    loc_id = payload.location_id
+    manual_loc = (payload.manual_campus_location or payload.location_name or "").strip() or None
+    if manual_loc and not loc_id:
+        from app.models.category_location import CampusLocation
+        existing_loc = db.query(CampusLocation).filter(
+            CampusLocation.name.ilike(manual_loc)
+        ).first()
+        if existing_loc:
+            loc_id = existing_loc.id
+        else:
+            new_loc = CampusLocation(
+                name=manual_loc,
+                building="Campus",
+                is_active=True,
+                college_id=college_id
+            )
+            db.add(new_loc)
+            db.flush()
+            loc_id = new_loc.id
+    elif not loc_id:
+        from app.models.category_location import CampusLocation
+        first_loc = db.query(CampusLocation).first()
+        loc_id = first_loc.id if first_loc else 1
+
+    teacher_name = (payload.handed_over_teacher_name or "").strip() or None
+
     report = Report(
         report_number=report_num,
         report_type=payload.report_type,
@@ -87,7 +129,9 @@ def create_report(
         received_by_teacher_id=received_teacher_id,
         report_date=payload.report_date,
         approximate_event_time=payload.approximate_event_time,
-        location_id=payload.location_id,
+        location_id=loc_id,
+        manual_campus_location=manual_loc,
+        handed_over_teacher_name=teacher_name,
         detailed_description=payload.detailed_description,
         status=initial_status,
         priority=payload.priority or ReportPriority.NORMAL
@@ -288,6 +332,11 @@ def update_report(
         raise HTTPException(status_code=403, detail="Students cannot change report status or priority")
 
     update_dict = payload.model_dump(exclude_unset=True)
+    if "location_name" in update_dict and not update_dict.get("manual_campus_location"):
+        update_dict["manual_campus_location"] = update_dict.pop("location_name")
+    elif "location_name" in update_dict:
+        update_dict.pop("location_name")
+
     for k, v in update_dict.items():
         setattr(report, k, v)
 
@@ -555,7 +604,7 @@ def close_report(
     db.commit()
 
     return {
-        "message": f"Report #{report_number} has been closed and permanently removed.",
+        "message": f"Report #{report_number} has been permanently closed and removed.",
         "id": report_id,
         "report_number": report_number,
         "status": "REMOVED"
