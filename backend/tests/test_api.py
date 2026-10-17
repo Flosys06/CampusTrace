@@ -471,36 +471,31 @@ def test_report_closure_and_reopen_workflow():
     }, headers=headers_b)
     assert unauth_close.status_code == 403
 
-    # 5. Student A closes own report
+    # 5. Student A closes own report -> permanently removes it
     close_resp = client.post(f"/api/reports/{report_id}/close", json={
         "reason": "Item found elsewhere",
         "notes": "Found in my hostel room backpack"
     }, headers=headers_a)
     assert close_resp.status_code == 200
     closed_data = close_resp.json()
-    assert closed_data["status"] == "CLOSED"
-    assert closed_data["resolved_at"] is not None
-    assert closed_data["resolution_type"] == "Item found elsewhere"
-    assert closed_data["resolution_notes"] == "Found in my hostel room backpack"
+    assert closed_data["status"] == "REMOVED"
+    assert "permanently closed and removed" in closed_data["message"]
 
-    # 6. Cannot close an already closed report
-    double_close = client.post(f"/api/reports/{report_id}/close", json={
-        "reason": "No longer needed"
-    }, headers=headers_a)
-    assert double_close.status_code == 400
+    # 6. Report is entirely removed: GET /reports/{id} returns 404
+    get_resp = client.get(f"/api/reports/{report_id}", headers=headers_a)
+    assert get_resp.status_code == 404
 
-    # 7. Closed report has no active matches returned
+    # 7. Matches cannot be queried for removed report -> 404
     matches_resp = client.get(f"/api/reports/{report_id}/matches", headers=headers_a)
-    assert matches_resp.status_code == 200
-    assert matches_resp.json() == []
+    assert matches_resp.status_code == 404
 
-    # 8. Student A reopens report
+    # 8. Report cannot be reopened -> 404
     reopen_resp = client.post(f"/api/reports/{report_id}/reopen", headers=headers_a)
-    assert reopen_resp.status_code == 200
-    reopened_data = reopen_resp.json()
-    assert reopened_data["status"] == "OPEN"
-    assert reopened_data["resolved_at"] is None
-    assert reopened_data["resolution_type"] is None
+    assert reopen_resp.status_code == 404
+
+    # 9. Report does not appear in user's active reports listing
+    my_reports = client.get("/api/reports?my_reports=true", headers=headers_a).json()
+    assert all(r["id"] != report_id for r in my_reports["items"])
 
 
 def test_visual_feature_extraction_and_gating():

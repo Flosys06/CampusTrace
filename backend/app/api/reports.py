@@ -459,17 +459,17 @@ async def upload_report_image(
 
     return item_image
 
-@router.post("/{report_id}/close", response_model=ReportResponse)
+@router.post("/{report_id}/close")
 def close_report(
     report_id: int,
-    payload: ReportCloseRequest,
+    payload: Optional[ReportCloseRequest] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Close an active report that is no longer needed or was resolved elsewhere.
+    Close and permanently remove an active report from the system.
     Authorized for report owner, finder/submitter, and campus teachers/admins.
-    Excludes the report from active matches and public searches.
+    Entirely deletes the report and associated files so it cannot be reopened.
     """
     report = db.query(Report).filter(Report.id == report_id).first()
     if not report:
@@ -492,106 +492,95 @@ def close_report(
     if not is_owner and not is_staff:
         raise HTTPException(status_code=403, detail="You do not have permission to close this report")
 
-    if report.status == ReportStatus.CLOSED:
-        raise HTTPException(status_code=400, detail="Report is already closed")
-
     if report.status == ReportStatus.RETURNED:
         raise HTTPException(status_code=400, detail="Cannot close a report that has already been returned to its owner")
 
-    now = datetime.now(timezone.utc)
-    report.status = ReportStatus.CLOSED
-    report.resolved_at = now
-    report.resolution_type = payload.reason
-    report.resolution_notes = payload.notes.strip() if payload.notes else None
-    report.updated_at = now
+    report_number = report.report_number
+    reason = payload.reason if payload and payload.reason else "Report closed and permanently removed"
+    notes = payload.notes.strip() if payload and payload.notes else None
 
-    db.commit()
-    db.refresh(report)
-
+    # Log audit event before deletion
     log_audit_event(
         db=db,
-        action="REPORT_CLOSED",
+        action="REPORT_CLOSED_AND_REMOVED",
         entity_type="REPORT",
         entity_id=str(report.id),
         actor_user_id=current_user.id,
         metadata={
-            "report_number": report.report_number,
-            "reason": payload.reason,
-            "notes": payload.notes,
+            "report_number": report_number,
+            "reason": reason,
+            "notes": notes,
             "closed_by_role": current_user.role.value
         }
     )
 
-    return report
+    # 1. Unlink any claims referencing this report as linked_lost_report_id
+    from app.models.claim import Claim
+    db.query(Claim).filter(Claim.linked_lost_report_id == report.id).update(
+        {"linked_lost_report_id": None}, synchronize_session=False
+    )
 
-@router.post("/{report_id}/reopen", response_model=ReportResponse)
+    # 2. Clean up physical image files from disk if present
+    from app.config import settings
+    for img in report.images:
+        if img.storage_key:
+            file_path = settings.UPLOAD_DIR / img.storage_key
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                except Exception as e:
+                    logger.warning(f"Failed to delete image file {img.storage_key}: {e}")
+
+    # 3. Clean up matches where this report was lost or found
+    from app.models.match import Match
+    db.query(Match).filter(
+        or_(Match.lost_report_id == report.id, Match.found_report_id == report.id)
+    ).delete(synchronize_session=False)
+
+    # 4. Clean up custody records and return records
+    from app.models.custody import CustodyRecord
+    from app.models.return_record import ReturnRecord
+    db.query(ReturnRecord).filter(ReturnRecord.report_id == report.id).delete(synchronize_session=False)
+    db.query(CustodyRecord).filter(CustodyRecord.report_id == report.id).delete(synchronize_session=False)
+
+    # 5. Clean up claims for found report
+    db.query(Claim).filter(Claim.found_report_id == report.id).delete(synchronize_session=False)
+
+    # 6. Delete item images and item
+    db.query(ItemImage).filter(ItemImage.report_id == report.id).delete(synchronize_session=False)
+    db.query(Item).filter(Item.report_id == report.id).delete(synchronize_session=False)
+
+    # 7. Delete report itself
+    db.delete(report)
+    db.commit()
+
+    return {
+        "message": f"Report #{report_number} has been closed and permanently removed.",
+        "id": report_id,
+        "report_number": report_number,
+        "status": "REMOVED"
+    }
+
+@router.delete("/{report_id}")
+def delete_report(
+    report_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Permanently delete and remove a report."""
+    return close_report(report_id=report_id, payload=None, current_user=current_user, db=db)
+
+@router.post("/{report_id}/reopen")
 def reopen_report(
     report_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Reopen an unintentionally closed report.
-    Authorized for report owner, finder/submitter, and campus teachers/admins.
-    """
+    """Reopening reports is discontinued because closing entirely removes the report."""
     report = db.query(Report).filter(Report.id == report_id).first()
     if not report:
-        raise HTTPException(status_code=404, detail="Report not found")
-
-    if current_user.role not in (UserRole.PLATFORM_ADMIN, UserRole.ADMIN):
-        if report.college_id and current_user.college_id and report.college_id != current_user.college_id:
-            raise HTTPException(status_code=403, detail="Access denied: Report belongs to another institution")
-
-    is_owner = current_user.id in (
-        report.created_by_user_id,
-        report.submitted_by_student_id,
-        report.reported_lost_by_student_id,
-        report.reported_found_by_student_id
-    )
-    is_staff = current_user.role in (UserRole.TEACHER, UserRole.ADMIN, UserRole.PLATFORM_ADMIN)
-
-    if not is_owner and not is_staff:
-        raise HTTPException(status_code=403, detail="You do not have permission to reopen this report")
-
-    if report.status != ReportStatus.CLOSED:
-        raise HTTPException(status_code=400, detail="Only closed reports can be reopened")
-
-    now = datetime.now(timezone.utc)
-    if report.report_type == ReportType.LOST:
-        report.status = ReportStatus.OPEN
-    else:
-        if report.custody_records:
-            report.status = ReportStatus.IN_CUSTODY
-        else:
-            report.status = ReportStatus.OPEN
-
-    report.resolved_at = None
-    report.resolution_type = None
-    report.resolution_notes = None
-    report.updated_at = now
-
-    db.commit()
-    db.refresh(report)
-
-    # Re-trigger matching
-    try:
-        matching_engine.find_and_save_matches_for_report(db, report)
-    except Exception as e:
-        logger.error(f"Failed to re-match report #{report.id} on reopen: {e}")
-
-    log_audit_event(
-        db=db,
-        action="REPORT_REOPENED",
-        entity_type="REPORT",
-        entity_id=str(report.id),
-        actor_user_id=current_user.id,
-        metadata={
-            "report_number": report.report_number,
-            "restored_status": report.status.value
-        }
-    )
-
-    return report
+        raise HTTPException(status_code=404, detail="Report not found (closed reports are permanently removed)")
+    raise HTTPException(status_code=400, detail="Reports cannot be reopened. Closing a report entirely removes it from the system.")
 
 @router.get("/{report_id}/matches", response_model=List[MatchResponse])
 def get_report_matches(
