@@ -320,3 +320,87 @@ def test_ninja_scan_found_matches_and_alert_teacher():
         app.dependency_overrides.pop(get_current_user, None)
         settings.API_NINJAS_API_KEY = original_key
 
+
+def test_ninja_detect_caching():
+    """Identical image bytes must hit server cache and make zero second upstream requests."""
+    from app.services.ninja_detection_service import ninja_detection_service
+    ninja_detection_service.clear_cache()
+
+    original_key = settings.API_NINJAS_API_KEY
+    settings.API_NINJAS_API_KEY = "test_cache_secret_key"
+
+    mock_json = [
+        {"label": "backpack", "confidence": "0.95", "bounding_box": {"x1": "0", "y1": "0", "x2": "100", "y2": "100"}}
+    ]
+    mock_resp = httpx.Response(
+        status_code=200,
+        json=mock_json,
+        request=httpx.Request("POST", "https://api.api-ninjas.com/v1/objectdetection")
+    )
+
+    try:
+        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_resp
+
+            file_bytes = b"\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00same_image_bytes_123"
+            
+            # Request 1: Fresh detection
+            files1 = {"file": ("item.jpg", io.BytesIO(file_bytes), "image/jpeg")}
+            res1 = client.post("/api/detection/ninja-detect", files=files1)
+            assert res1.status_code == 200
+            data1 = res1.json()
+            assert data1["cached"] is False
+            assert data1["top_label"] == "Backpack"
+            assert mock_post.call_count == 1
+
+            # Request 2: Re-request identical image
+            files2 = {"file": ("item_copy.jpg", io.BytesIO(file_bytes), "image/jpeg")}
+            res2 = client.post("/api/detection/ninja-detect", files=files2)
+            assert res2.status_code == 200
+            data2 = res2.json()
+            assert data2["cached"] is True
+            assert data2["top_label"] == "Backpack"
+            # Crucial: Upstream was NOT called again! Call count remains 1!
+            assert mock_post.call_count == 1
+    finally:
+        settings.API_NINJAS_API_KEY = original_key
+        ninja_detection_service.clear_cache()
+
+
+def test_ninja_detect_rate_limiting():
+    """Exceeding the request rate limit returns HTTP 429."""
+    from app.services.ninja_detection_service import ninja_detection_service
+    ninja_detection_service.clear_cache()
+
+    original_key = settings.API_NINJAS_API_KEY
+    settings.API_NINJAS_API_KEY = "test_ratelimit_key"
+
+    mock_json = [{"label": "bottle", "confidence": "0.9"}]
+    mock_resp = httpx.Response(
+        status_code=200,
+        json=mock_json,
+        request=httpx.Request("POST", "https://api.api-ninjas.com/v1/objectdetection")
+    )
+
+    try:
+        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_resp
+
+            # Hit rate limit (configured as 15 requests/minute)
+            for i in range(15):
+                unique_bytes = f"\xFF\xD8\xFF\xE0unique_file_{i}".encode("utf-8")
+                files = {"file": (f"test_{i}.jpg", io.BytesIO(unique_bytes), "image/jpeg")}
+                res = client.post("/api/detection/ninja-detect", files=files)
+                assert res.status_code == 200
+
+            # 16th request should be rate-limited
+            overflow_bytes = b"\xFF\xD8\xFF\xE0overflow_file"
+            files = {"file": ("overflow.jpg", io.BytesIO(overflow_bytes), "image/jpeg")}
+            overflow_res = client.post("/api/detection/ninja-detect", files=files)
+            assert overflow_res.status_code == 429
+            assert "rate limit exceeded" in overflow_res.json()["detail"].lower()
+    finally:
+        settings.API_NINJAS_API_KEY = original_key
+        ninja_detection_service.clear_cache()
+
+

@@ -20,8 +20,10 @@ import {
 import { api } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { Category, CampusLocation, StorageLocation, User, FoundMatchCandidate } from '../../types';
-import { localVisionPipeline, StaleInferenceError } from '../../services/vision/localVisionPipeline';
+import { localVisionPipeline } from '../../services/vision/localVisionPipeline';
 import { getExifTimeFromFile } from '../../utils/exifTime';
+import { useReportDetection } from '../../services/detection/useReportDetection';
+import { EnhancedDetectionBar } from '../detection/EnhancedDetectionBar';
 
 interface CameraReportFlowProps {
   initialType?: 'LOST' | 'FOUND';
@@ -46,26 +48,6 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
   const [currentStep, setCurrentStep] = useState<'DETAILS' | 'SUCCESS'>('DETAILS');
   const [reportType, setReportType] = useState<'LOST' | 'FOUND'>(initialType);
 
-  // Optional Live Webcam states (only opened on explicit user request)
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
-  const [hasCameraAccess, setHasCameraAccess] = useState<boolean | null>(null);
-  const [showWebcam, setShowWebcam] = useState(false);
-
-  // Captured photo
-  const [capturedFile, setCapturedFile] = useState<File | null>(null);
-  const [capturedPreview, setCapturedPreview] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-
-  // Local Vision Analysis Status
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [ninjaDetectedLabel, setNinjaDetectedLabel] = useState<string | null>(null);
-  const [ninjaConfidence, setNinjaConfidence] = useState<number | null>(null);
-  const [foundMatches, setFoundMatches] = useState<FoundMatchCandidate[]>([]);
-  const [isAlerting, setIsAlerting] = useState(false);
-  const [alertSuccess, setAlertSuccess] = useState<string | null>(null);
-
   // Lookups
   const [categories, setCategories] = useState<Category[]>([]);
   const [locations, setLocations] = useState<CampusLocation[]>([]);
@@ -85,6 +67,47 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
   const [distinguishingFeatures, setDistinguishingFeatures] = useState('');
   const [handedOverTeacherName, setHandedOverTeacherName] = useState('');
   const [showOptionalFields, setShowOptionalFields] = useState(false);
+
+  // Shared detection engine: Local-first inference, manual edit protection, and explicit AI enhancement
+  const {
+    imageFile: capturedFile,
+    imagePreview: capturedPreview,
+    isLocalScanning,
+    isEnhancedScanning,
+    detectionStatus,
+    showConsentModal,
+    markFieldEdited,
+    handleSelectImage,
+    handleClearImage,
+    requestEnhancedScan,
+    confirmEnhancedScan,
+    dismissConsentModal,
+  } = useReportDetection({
+    categories,
+    initialFile,
+    initialLabel,
+    onApplyFields: (fields) => {
+      if (fields.itemName) setItemName(fields.itemName);
+      if (fields.categoryId) setCategoryId(fields.categoryId);
+      if (fields.color) setColor(fields.color);
+      if (fields.description) setDescription(fields.description);
+    },
+  });
+
+  // Optional Live Webcam states (only opened on explicit user request)
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
+  const [hasCameraAccess, setHasCameraAccess] = useState<boolean | null>(null);
+  const [showWebcam, setShowWebcam] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+
+  // Matches & Alerts
+  const [foundMatches, setFoundMatches] = useState<FoundMatchCandidate[]>([]);
+  const [isAlerting, setIsAlerting] = useState(false);
+  const [alertSuccess, setAlertSuccess] = useState<string | null>(null);
+
+
 
   // Teacher Handover fields
   const [finderStudentId, setFinderStudentId] = useState<number | ''>('');
@@ -131,18 +154,12 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
     localVisionPipeline.prewarm().catch(() => {});
   }, [role]);
 
-  // Handle preloaded file from photo scan match modal
+  // Handle preloaded label from photo scan match modal
   useEffect(() => {
-    if (initialFile) {
-      setCapturedFile(initialFile);
-      setCapturedPreview(URL.createObjectURL(initialFile));
-      if (initialLabel) {
-        setItemName(initialLabel);
-      }
-      setCurrentStep('DETAILS');
-      runAiAnalysis(initialFile);
+    if (initialLabel) {
+      setItemName(initialLabel);
     }
-  }, [initialFile, initialLabel]);
+  }, [initialLabel]);
 
   // Start Camera stream when in CAMERA step
   const startCamera = async () => {
@@ -204,8 +221,6 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
         const file = new File([blob], `campus_capture_${Date.now()}.jpg`, {
           type: 'image/jpeg',
         });
-        setCapturedFile(file);
-        setCapturedPreview(URL.createObjectURL(file));
 
         // Auto-populate approximate time with capture time
         const now = new Date();
@@ -214,7 +229,7 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
 
         setShowWebcam(false);
         stopCamera();
-        runAiAnalysis(file);
+        handleSelectImage(file);
       },
       'image/jpeg',
       0.92
@@ -225,9 +240,6 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
   const handleGalleryUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      setCapturedFile(file);
-      setCapturedPreview(URL.createObjectURL(file));
-
       getExifTimeFromFile(file).then((timeStr) => {
         if (timeStr) {
           setApproximateTime(timeStr);
@@ -237,7 +249,7 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
       });
 
       stopCamera();
-      runAiAnalysis(file);
+      handleSelectImage(file);
     }
   };
 
@@ -258,9 +270,6 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
       if (file.type.startsWith('image/')) {
-        setCapturedFile(file);
-        setCapturedPreview(URL.createObjectURL(file));
-
         getExifTimeFromFile(file).then((timeStr) => {
           if (timeStr) {
             setApproximateTime(timeStr);
@@ -270,87 +279,7 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
         });
 
         stopCamera();
-        runAiAnalysis(file);
-      }
-    }
-  };
-
-  // Analysis Step (Cloud Detection + Local Vision Pipeline)
-  const runAiAnalysis = async (file: File) => {
-    setCurrentStep('DETAILS');
-    setIsAnalyzing(true);
-    setFoundMatches([]);
-    setAlertSuccess(null);
-
-    // 1. Automatic Cloud Object Detection via API Ninjas
-    try {
-      const ninjaRes = await api.ninjaDetectObjects(file);
-      if (ninjaRes.detected_objects && ninjaRes.detected_objects.length > 0) {
-        const top = ninjaRes.detected_objects[0];
-        const formattedLabel = top.label.charAt(0).toUpperCase() + top.label.slice(1);
-        setNinjaDetectedLabel(formattedLabel);
-        setNinjaConfidence(top.confidence);
-
-        if (!itemName.trim() || itemName === 'Campus Belonging') {
-          setItemName(formattedLabel);
-        }
-        if (ninjaRes.suggested_category) {
-          const matched = categories.find(
-            c => c.name.toLowerCase() === ninjaRes.suggested_category?.toLowerCase() ||
-                 c.name.toLowerCase().includes(ninjaRes.suggested_category?.toLowerCase() || '')
-          );
-          if (matched) {
-            setCategoryId(matched.id);
-          }
-        }
-        if (!description.trim() || description.startsWith('Identified')) {
-          setDescription(ninjaRes.suggested_description || `Identified ${formattedLabel} via photo detection.`);
-        }
-      }
-    } catch (ninjaErr) {
-      console.warn('API Ninjas auto-detection fallback:', ninjaErr);
-    }
-
-    // 2. Local vision pipeline for color and secondary attributes
-    try {
-      const result = await localVisionPipeline.analyzeImage(file, categories);
-
-      // Pre-fill form fields based on detection results
-      if (!itemName.trim() || itemName === 'Campus Belonging') {
-        setItemName(result.itemName);
-      }
-      if (!categoryId && result.categoryId) {
-        setCategoryId(result.categoryId);
-      }
-      if (!color.trim() && result.primaryColor && result.primaryColor !== 'Unknown') {
-        setColor(result.primaryColor);
-      }
-      if (!description.trim()) {
-        setDescription(result.suggestedDescription);
-      }
-    } catch (err: any) {
-      if (!(err instanceof StaleInferenceError)) {
-        console.warn('Local vision analysis error, using fallback:', err);
-      }
-      if (!itemName.trim()) {
-        setItemName('Campus Belonging');
-      }
-      if (!description.trim()) {
-        setDescription('Item photographed on campus grounds.');
-      }
-    } finally {
-      setIsAnalyzing(false);
-    }
-
-    // 3. If reporting a LOST item, privately check for existing FOUND items in campus custody!
-    if (reportType === 'LOST') {
-      try {
-        const matchRes = await api.scanFoundMatches(file);
-        if (matchRes.matches && matchRes.matches.length > 0) {
-          setFoundMatches(matchRes.matches);
-        }
-      } catch (matchErr) {
-        console.warn('Found match scan error:', matchErr);
+        handleSelectImage(file);
       }
     }
   };
@@ -372,11 +301,7 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
 
   // Retake / Replace photo
   const handleRetake = () => {
-    if (capturedPreview) URL.revokeObjectURL(capturedPreview);
-    setCapturedFile(null);
-    setCapturedPreview(null);
-    setNinjaDetectedLabel(null);
-    setNinjaConfidence(null);
+    handleClearImage();
     setFoundMatches([]);
     setAlertSuccess(null);
     setShowWebcam(false);
@@ -506,30 +431,43 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
 
             {/* 1. Photo Intake Section */}
             {capturedPreview ? (
-              <div className="flex items-center justify-between p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700">
-                <div className="flex items-center gap-3.5 min-w-0">
-                  <img
-                    src={capturedPreview}
-                    alt="Attached item"
-                    className="w-16 h-16 rounded-xl object-cover border border-slate-300 dark:border-slate-600 shrink-0 shadow-sm"
-                  />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                      <span>Photo Attached</span>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <img
+                      src={capturedPreview}
+                      alt="Attached item"
+                      className="w-16 h-16 rounded-xl object-cover border border-slate-300 dark:border-slate-600 shrink-0 shadow-sm"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                        <span>Photo Attached</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                        {capturedFile ? `${capturedFile.name} (${((capturedFile.size) / 1024).toFixed(0)} KB)` : 'Item photo ready'}
+                      </p>
                     </div>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-                      {capturedFile ? `${capturedFile.name} (${((capturedFile.size) / 1024).toFixed(0)} KB)` : 'Item photo ready'}
-                    </p>
                   </div>
+                  <button
+                    type="button"
+                    onClick={handleRetake}
+                    className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-900 transition-colors shrink-0 ml-2"
+                  >
+                    Replace Photo
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleRetake}
-                  className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-900 transition-colors shrink-0 ml-2"
-                >
-                  Replace Photo
-                </button>
+
+                <EnhancedDetectionBar
+                  hasImage={!!capturedPreview}
+                  isLocalScanning={isLocalScanning}
+                  isEnhancedScanning={isEnhancedScanning}
+                  detectionStatus={detectionStatus}
+                  showConsentModal={showConsentModal}
+                  onRequestEnhancedScan={requestEnhancedScan}
+                  onConfirmEnhancedScan={confirmEnhancedScan}
+                  onDismissConsentModal={dismissConsentModal}
+                />
               </div>
             ) : showWebcam ? (
               <div className="relative rounded-2xl overflow-hidden bg-black p-4 space-y-3 border border-slate-800 text-white">
@@ -660,29 +598,6 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
             {/* Form */}
             <form onSubmit={handleFinalSubmit} className="space-y-4 pt-1">
 
-            {/* Neutral Preparing Details Indicator */}
-            {isAnalyzing && (
-              <div className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs animate-pulse">
-                <div className="w-3.5 h-3.5 border-2 border-indigo-600 dark:border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
-                <span className="font-medium">Detecting object & preparing item details…</span>
-              </div>
-            )}
-
-            {/* Auto-detected notification badge */}
-            {ninjaDetectedLabel && !isAnalyzing && (
-              <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-xs text-indigo-900 dark:text-indigo-200 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                  <span>
-                    Auto-detected: <strong>{ninjaDetectedLabel}</strong> ({Math.round((ninjaConfidence || 0) * 100)}% confidence)
-                  </span>
-                </div>
-                <span className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300 bg-white/70 dark:bg-slate-900/70 px-2 py-0.5 rounded-md">
-                  Autofilled
-                </span>
-              </div>
-            )}
-
             {/* Teacher Alert Success Banner */}
             {alertSuccess && (
               <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200 flex items-start gap-2.5">
@@ -758,7 +673,10 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
               <input
                 type="text"
                 value={itemName}
-                onChange={(e) => setItemName(e.target.value)}
+                onChange={(e) => {
+                  setItemName(e.target.value);
+                  markFieldEdited('itemName');
+                }}
                 placeholder="e.g. Silver MacBook Air or Navy Backpack"
                 className="w-full px-3.5 py-2.5 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
                 required
@@ -772,7 +690,10 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
                 </label>
                 <select
                   value={categoryId}
-                  onChange={(e) => setCategoryId(Number(e.target.value))}
+                  onChange={(e) => {
+                    setCategoryId(Number(e.target.value));
+                    markFieldEdited('categoryId');
+                  }}
                   className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
                   required
                 >
@@ -833,7 +754,10 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
                 <input
                   type="text"
                   value={color}
-                  onChange={(e) => setColor(e.target.value)}
+                  onChange={(e) => {
+                    setColor(e.target.value);
+                    markFieldEdited('color');
+                  }}
                   placeholder="e.g. Silver, Black"
                   className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
                 />
@@ -847,7 +771,10 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
               <textarea
                 rows={2}
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onChange={(e) => {
+                  setDescription(e.target.value);
+                  markFieldEdited('description');
+                }}
                 placeholder="Where on campus, what desk or bench, specific marks..."
                 className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
               />

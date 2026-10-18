@@ -1,6 +1,9 @@
 import io
+import time
+import hashlib
+import asyncio
 import logging
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 import httpx
 from PIL import Image
 import numpy as np
@@ -53,6 +56,72 @@ LABEL_TO_CATEGORY: Dict[str, str] = {
 }
 
 class NinjaDetectionService:
+    CACHE_TTL_SECONDS: float = 86400.0  # 24 hours
+    MAX_CACHE_ENTRIES: int = 1000
+    RATE_LIMIT_WINDOW_SECONDS: float = 60.0
+    RATE_LIMIT_MAX_REQUESTS: int = 15
+
+    def __init__(self):
+        # In-memory SHA-256 fingerprint cache: hash -> (NinjaDetectionResponse, timestamp)
+        self._cache: Dict[str, Tuple[NinjaDetectionResponse, float]] = {}
+        # In-flight request deduplication: hash -> asyncio.Future
+        self._in_flight: Dict[str, asyncio.Future] = {}
+        # Client rate limiting: client_id -> list of request timestamps
+        self._rate_limits: Dict[str, List[float]] = {}
+
+    def clear_cache(self):
+        """Clears memory caches and rate limiters (useful for testing)."""
+        self._cache.clear()
+        self._in_flight.clear()
+        self._rate_limits.clear()
+
+    def compute_image_hash(self, image_bytes: bytes) -> str:
+        """Computes SHA-256 cryptographic fingerprint of the image bytes."""
+        return hashlib.sha256(image_bytes).hexdigest()
+
+    def get_cached_detection(self, image_hash: str) -> Optional[NinjaDetectionResponse]:
+        """Retrieves valid unexpired detection result from cache if present."""
+        now = time.time()
+        entry = self._cache.get(image_hash)
+        if not entry:
+            return None
+        cached_res, timestamp = entry
+        if now - timestamp > self.CACHE_TTL_SECONDS:
+            self._cache.pop(image_hash, None)
+            return None
+        # Return a copy marked with cached=True
+        res_copy = cached_res.model_copy()
+        res_copy.cached = True
+        return res_copy
+
+    def set_cached_detection(self, image_hash: str, response: NinjaDetectionResponse):
+        """Saves a detection result to the memory cache with eviction guardrails."""
+        now = time.time()
+        if len(self._cache) >= self.MAX_CACHE_ENTRIES:
+            # Purge expired
+            self._cache = {k: v for k, v in self._cache.items() if now - v[1] <= self.CACHE_TTL_SECONDS}
+            # If still exceeding capacity, drop oldest 100 entries
+            if len(self._cache) >= self.MAX_CACHE_ENTRIES:
+                oldest_keys = sorted(self._cache.keys(), key=lambda k: self._cache[k][1])[:100]
+                for k in oldest_keys:
+                    self._cache.pop(k, None)
+        self._cache[image_hash] = (response, now)
+
+    def check_rate_limit(self, client_id: Optional[str]):
+        """Enforces a basic sliding-window rate limit per client/IP."""
+        if not client_id:
+            return
+        now = time.time()
+        timestamps = self._rate_limits.setdefault(client_id, [])
+        # Purge timestamps outside the active sliding window
+        self._rate_limits[client_id] = [t for t in timestamps if now - t <= self.RATE_LIMIT_WINDOW_SECONDS]
+        if len(self._rate_limits[client_id]) >= self.RATE_LIMIT_MAX_REQUESTS:
+            raise HTTPException(
+                status_code=429,
+                detail="Image detection rate limit exceeded. Please wait a moment before analyzing more photos."
+            )
+        self._rate_limits[client_id].append(now)
+
     def _get_api_key(self) -> str:
         """
         Retrieves the API key securely.
@@ -78,10 +147,15 @@ class NinjaDetectionService:
         self,
         image_bytes: bytes,
         filename: str = "upload.jpg",
-        content_type: str = "image/jpeg"
+        content_type: str = "image/jpeg",
+        client_id: Optional[str] = None
     ) -> NinjaDetectionResponse:
         """
-        Sends image bytes to API Ninjas Object Detection API and returns parsed results.
+        Detects objects in an image with:
+        1. Rate limiting per client.
+        2. Cryptographic SHA-256 fingerprint caching (no external request on cache hit).
+        3. In-flight request deduplication for concurrent identical images.
+        4. Bounded retries and upstream timeouts.
         """
         if not image_bytes or len(image_bytes) == 0:
             raise HTTPException(
@@ -95,6 +169,52 @@ class NinjaDetectionService:
                 detail=f"Image exceeds maximum permitted size of {settings.MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)}MB."
             )
 
+        # 1. Check rate limit
+        self.check_rate_limit(client_id)
+
+        # 2. Cryptographic fingerprint caching
+        image_hash = self.compute_image_hash(image_bytes)
+        cached = self.get_cached_detection(image_hash)
+        if cached:
+            logger.info(f"Serving cached detection for image hash {image_hash[:12]}...")
+            return cached
+
+        # 3. In-flight request deduplication
+        if image_hash in self._in_flight:
+            logger.info(f"Deduplicating in-flight detection request for image hash {image_hash[:12]}...")
+            existing_future = self._in_flight[image_hash]
+            result = await existing_future
+            res_copy = result.model_copy()
+            res_copy.cached = True
+            return res_copy
+
+        # 4. Create in-flight task future
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self._in_flight[image_hash] = future
+
+        try:
+            result = await self._perform_upstream_detection(image_bytes, filename, content_type)
+            self.set_cached_detection(image_hash, result)
+            if not future.done():
+                future.set_result(result)
+            return result
+        except Exception as exc:
+            if not future.done():
+                future.set_exception(exc)
+            raise
+        finally:
+            self._in_flight.pop(image_hash, None)
+
+    async def _perform_upstream_detection(
+        self,
+        image_bytes: bytes,
+        filename: str,
+        content_type: str
+    ) -> NinjaDetectionResponse:
+        """
+        Internal caller to API Ninjas Object Detection with bounded retry and timeout.
+        """
         api_key = self._get_api_key()
         url = settings.API_NINJAS_OBJECT_DETECTION_URL
 
@@ -106,20 +226,33 @@ class NinjaDetectionService:
             "image": (filename, image_bytes, content_type)
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=12.0) as client:
-                response = await client.post(url, headers=headers, files=files)
-        except httpx.TimeoutException:
-            logger.warning("Timeout connecting to API Ninjas Object Detection API")
-            raise HTTPException(
-                status_code=504,
-                detail="Upstream API Ninjas object detection service timed out. Please try again."
-            )
-        except httpx.RequestError as exc:
-            logger.warning(f"Network error querying API Ninjas Object Detection: {exc.__class__.__name__}")
+        # Bounded retry: try up to 2 attempts for transient connection/timeout failures
+        response = None
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(url, headers=headers, files=files)
+                break
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                if attempt == 0:
+                    logger.warning(f"Transient error querying API Ninjas (attempt 1/2): {exc.__class__.__name__}. Retrying once...")
+                    await asyncio.sleep(0.5)
+                    continue
+                logger.warning(f"API Ninjas request failed after 2 attempts: {exc.__class__.__name__}")
+                if isinstance(exc, httpx.TimeoutException):
+                    raise HTTPException(
+                        status_code=504,
+                        detail="Upstream API Ninjas object detection service timed out. Please try again."
+                    )
+                raise HTTPException(
+                    status_code=502,
+                    detail="Failed to connect to upstream API Ninjas object detection service."
+                )
+
+        if response is None:
             raise HTTPException(
                 status_code=502,
-                detail="Failed to connect to upstream API Ninjas object detection service."
+                detail="Failed to receive a response from API Ninjas object detection."
             )
 
         # Handle 200 OK
@@ -178,7 +311,7 @@ class NinjaDetectionService:
 
             suggested_title = f"{top_label}" if top_label else "Campus Belonging"
             suggested_desc = (
-                f"Identified {top_label} (confidence: {int(top_conf * 100)}%) via API Ninjas cloud object detection."
+                f"Identified {top_label} via cloud object detection."
                 if top_item
                 else "No recognizable objects were detected in the photograph."
             )
@@ -192,7 +325,8 @@ class NinjaDetectionService:
                 suggested_category=suggested_cat,
                 suggested_title=suggested_title,
                 suggested_description=suggested_desc,
-                provider="API Ninjas Object Detection"
+                provider="API Ninjas Object Detection",
+                cached=False
             )
 
         # Handle specific error status codes
@@ -235,8 +369,12 @@ class NinjaDetectionService:
             detail="Upstream API Ninjas object detection service encountered an error. Please try again later."
         )
 
-    async def detect_from_upload(self, file: UploadFile) -> NinjaDetectionResponse:
-        """Detects objects from an uploaded FastAPI UploadFile."""
+    async def detect_from_upload(
+        self,
+        file: UploadFile,
+        client_id: Optional[str] = None
+    ) -> NinjaDetectionResponse:
+        """Detects objects from an uploaded FastAPI UploadFile with deduplication and caching."""
         # Validate MIME type
         if file.content_type not in settings.ALLOWED_IMAGE_MIMES:
             raise HTTPException(
@@ -248,7 +386,8 @@ class NinjaDetectionService:
         return await self.detect_objects_from_bytes(
             image_bytes=image_bytes,
             filename=file.filename or "photo.jpg",
-            content_type=file.content_type or "image/jpeg"
+            content_type=file.content_type or "image/jpeg",
+            client_id=client_id
         )
 
     def extract_color_from_bytes(self, image_bytes: bytes) -> str:
@@ -291,14 +430,15 @@ class NinjaDetectionService:
         image_bytes: bytes,
         current_user: User,
         filename: str = "lost_photo.jpg",
-        content_type: str = "image/jpeg"
+        content_type: str = "image/jpeg",
+        client_id: Optional[str] = None
     ) -> ScanMatchResponse:
         """
         Scans a student's lost item photograph with API Ninjas and searches active
         FOUND reports across campus to find high-confidence matches before reporting.
         """
-        # 1. Detect objects using API Ninjas
-        ninja_res = await self.detect_objects_from_bytes(image_bytes, filename, content_type)
+        # 1. Detect objects using API Ninjas (reusing SHA-256 fingerprint cache)
+        ninja_res = await self.detect_objects_from_bytes(image_bytes, filename, content_type, client_id=client_id)
         detected_color = self.extract_color_from_bytes(image_bytes)
 
         detected_labels = [o.label.lower() for o in ninja_res.detected_objects]

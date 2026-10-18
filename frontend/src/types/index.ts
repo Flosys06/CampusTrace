@@ -363,6 +363,7 @@ export interface NinjaDetectionResult {
   suggested_title?: string | null;
   suggested_description?: string | null;
   provider: string;
+  cached?: boolean;
 }
 
 export interface NinjaDetectionStatus {

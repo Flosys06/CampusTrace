@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -42,13 +42,16 @@ def get_detection_status():
     description="Uploads an item photograph to API Ninjas Object Detection API and returns identified items and bounding boxes."
 )
 async def detect_objects(
+    request: Request,
     file: UploadFile = File(..., description="Item photograph file (JPEG, PNG, or WEBP)")
 ):
     """
     Server-side proxy that securely attaches the API Ninjas API key and
     forwards the image to API Ninjas Object Detection.
+    Features cryptographic SHA-256 caching and in-flight request deduplication.
     """
-    return await ninja_detection_service.detect_from_upload(file)
+    client_ip = request.client.host if request.client else "unknown"
+    return await ninja_detection_service.detect_from_upload(file, client_id=client_ip)
 
 @router.post(
     "/scan-found-matches",
@@ -57,6 +60,7 @@ async def detect_objects(
     description="Upload a photo of a lost item to privately scan active campus FOUND reports and identify matching recovered items."
 )
 async def scan_found_matches(
+    request: Request,
     file: UploadFile = File(..., description="Photo of the lost item (JPEG, PNG, or WEBP)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -72,12 +76,14 @@ async def scan_found_matches(
             detail=f"Unsupported image type '{file.content_type}'. Supported formats: JPEG, PNG, WEBP."
         )
     image_bytes = await file.read()
+    client_ip = request.client.host if request.client else str(current_user.id)
     return await ninja_detection_service.scan_and_match_found_reports(
         db=db,
         image_bytes=image_bytes,
         current_user=current_user,
         filename=file.filename or "lost_item.jpg",
-        content_type=file.content_type or "image/jpeg"
+        content_type=file.content_type or "image/jpeg",
+        client_id=client_ip
     )
 
 @router.post(

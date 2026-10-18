@@ -21,8 +21,8 @@ class NinjaDetectionResponse(BaseModel):
     top_confidence: Optional[float] = Field(None, description="Highest confidence score")
     suggested_category: Optional[str] = Field(None, description="Suggested campus category")
     suggested_title: Optional[str] = Field(None, description="Autofill title suggestion")
-    suggested_description: Optional[str] = Field(None, description="Autofill description suggestion")
     provider: str = Field("API Ninjas Object Detection", description="Inference engine provider")
+    cached: bool = Field(False, description="Whether the result was served from server-side cache")
 
 class FoundMatchCandidate(BaseModel):
     report_id: int

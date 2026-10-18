@@ -6,20 +6,16 @@ import {
   PlusCircle,
   Shield,
   AlertCircle,
-  Cloud,
-  Sparkles,
   CheckCircle2,
   Send,
-  MapPin,
-  Calendar,
   Package,
-  ArrowRight
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
-import { Category, CampusLocation, StorageLocation, User, NinjaDetectedItem, FoundMatchCandidate } from '../types';
-import { localVisionPipeline, StaleInferenceError } from '../services/vision/localVisionPipeline';
+import { Category, CampusLocation, StorageLocation, User, FoundMatchCandidate } from '../types';
 import { getExifTimeFromFile } from '../utils/exifTime';
+import { useReportDetection } from '../services/detection/useReportDetection';
+import { EnhancedDetectionBar } from '../components/detection/EnhancedDetectionBar';
 
 export const CreateReportPage: React.FC = () => {
   const { role } = useAuth();
@@ -55,13 +51,46 @@ export const CreateReportPage: React.FC = () => {
   const [confirmPhysicalReceipt, setConfirmPhysicalReceipt] = useState(true);
   const [storageLocationId, setStorageLocationId] = useState<number | ''>('');
 
-  // Image upload state
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [analyzingImage, setAnalyzingImage] = useState(false);
-  const [ninjaScanning, setNinjaScanning] = useState(false);
-  const [ninjaItems, setNinjaItems] = useState<NinjaDetectedItem[]>([]);
-  const [ninjaMessage, setNinjaMessage] = useState<string | null>(null);
+  // Hook for local-first image detection and user-controlled enhanced scanning
+  const {
+    imageFile,
+    imagePreview,
+    isLocalScanning,
+    isEnhancedScanning,
+    detectionStatus,
+    showConsentModal,
+    handleSelectImage,
+    handleClearImage,
+    requestEnhancedScan,
+    confirmEnhancedScan,
+    dismissConsentModal,
+    markFieldEdited,
+  } = useReportDetection({
+    categories,
+    onApplyFields: (fields) => {
+      if (fields.itemName) setItemName(fields.itemName);
+      if (fields.categoryId) setCategoryId(fields.categoryId);
+      if (fields.color) setColor(fields.color);
+      if (fields.description) {
+        setDetailedDescription(fields.description);
+        setVisualDescription(fields.description);
+      }
+    },
+    onEnhancedComplete: async (file) => {
+      // If user is reporting a LOST item and requested AI enhancement,
+      // also check for matching recovered items in faculty custody
+      if (reportType === 'LOST') {
+        try {
+          const matchRes = await api.scanFoundMatches(file);
+          if (matchRes.matches && matchRes.matches.length > 0) {
+            setFoundMatches(matchRes.matches);
+          }
+        } catch (matchErr) {
+          console.warn('Custody match scan error:', matchErr);
+        }
+      }
+    },
+  });
 
   // Matched found items in custody
   const [foundMatches, setFoundMatches] = useState<FoundMatchCandidate[]>([]);
@@ -100,117 +129,30 @@ export const CreateReportPage: React.FC = () => {
     };
 
     loadFormData();
-    // Pre-warm local vision model in the background for zero-latency autofill
-    localVisionPipeline.prewarm().catch(() => {});
   }, [role]);
 
-  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      if (file.size > 10 * 1024 * 1024) {
-        setError('Image file must be under 10MB');
-        return;
-      }
-      setImageFile(file);
-      if (imagePreview) {
-        URL.revokeObjectURL(imagePreview);
-      }
-      setImagePreview(URL.createObjectURL(file));
       setError(null);
-      setAnalyzingImage(true);
-      setNinjaMessage(null);
       setFoundMatches([]);
       setSelectedCandidate(null);
       setAlertSuccess(null);
 
-      // Attempt reading EXIF timestamp from file
+      // Attempt reading EXIF timestamp from file (local, non-network)
       getExifTimeFromFile(file).then((timeStr) => {
         if (timeStr) {
           setApproximateTime(timeStr);
         }
       });
 
-      // 1. Run automatic API Ninjas object detection & autofill
-      try {
-        const ninjaRes = await api.ninjaDetectObjects(file);
-        setNinjaItems(ninjaRes.detected_objects);
-        if (ninjaRes.detected_objects && ninjaRes.detected_objects.length > 0) {
-          const top = ninjaRes.detected_objects[0];
-          const formattedLabel = top.label.charAt(0).toUpperCase() + top.label.slice(1);
-          if (!itemName.trim() || itemName === 'Campus Belonging') {
-            setItemName(formattedLabel);
-          }
-          if (ninjaRes.suggested_category) {
-            const matched = categories.find(
-              c => c.name.toLowerCase() === ninjaRes.suggested_category?.toLowerCase() ||
-                   c.name.toLowerCase().includes(ninjaRes.suggested_category?.toLowerCase() || '')
-            );
-            if (matched) {
-              setCategoryId(matched.id);
-            }
-          }
-          if (!detailedDescription.trim() || detailedDescription.startsWith('Identified')) {
-            setDetailedDescription(ninjaRes.suggested_description || `Identified ${formattedLabel} via photo detection.`);
-          }
-          if (!visualDescription.trim() || visualDescription.startsWith('Identified')) {
-            setVisualDescription(ninjaRes.suggested_description || `Identified ${formattedLabel} via photo detection.`);
-          }
-          setNinjaMessage(`Auto-detected: ${formattedLabel} (${Math.round(top.confidence * 100)}% confidence) via API Ninjas`);
-        }
-      } catch (ninjaErr: any) {
-        console.warn('API Ninjas auto-detection fallback:', ninjaErr);
-      }
-
-      // 2. Also run local vision pipeline for color and secondary attributes
-      try {
-        const result = await localVisionPipeline.analyzeImage(file, categories);
-
-        if (!itemName.trim() || itemName === 'Campus Belonging') {
-          setItemName(result.itemName);
-        }
-        if (!categoryId && result.categoryId) {
-          setCategoryId(result.categoryId);
-        }
-        if (!color.trim() && result.primaryColor && result.primaryColor !== 'Unknown') {
-          setColor(result.primaryColor);
-        }
-        if (!detailedDescription.trim()) {
-          setDetailedDescription(result.suggestedDescription);
-        }
-        if (!visualDescription.trim()) {
-          setVisualDescription(result.suggestedDescription);
-        }
-      } catch (err: any) {
-        if (!(err instanceof StaleInferenceError)) {
-          console.warn('Local vision autofill error:', err);
-        }
-      } finally {
-        setAnalyzingImage(false);
-      }
-
-      // 3. If reporting a LOST item, privately check for existing FOUND items in campus custody!
-      if (reportType === 'LOST') {
-        try {
-          const matchRes = await api.scanFoundMatches(file);
-          if (matchRes.matches && matchRes.matches.length > 0) {
-            setFoundMatches(matchRes.matches);
-          }
-        } catch (matchErr) {
-          console.warn('Found match scan error:', matchErr);
-        }
-      }
+      handleSelectImage(file);
+      e.target.value = '';
     }
   };
 
   const removeImage = () => {
-    setImageFile(null);
-    if (imagePreview) {
-      URL.revokeObjectURL(imagePreview);
-      setImagePreview(null);
-    }
-    setAnalyzingImage(false);
-    setNinjaItems([]);
-    setNinjaMessage(null);
+    handleClearImage();
     setFoundMatches([]);
     setSelectedCandidate(null);
     setAlertSuccess(null);
@@ -229,39 +171,6 @@ export const CreateReportPage: React.FC = () => {
       alert(err.message || 'Failed to alert custodian teacher.');
     } finally {
       setIsAlerting(false);
-    }
-  };
-
-  const handleScanWithNinja = async () => {
-    if (!imageFile) return;
-    setNinjaScanning(true);
-    setNinjaMessage(null);
-    try {
-      const res = await api.ninjaDetectObjects(imageFile);
-      setNinjaItems(res.detected_objects);
-      if (res.detected_objects.length > 0) {
-        const top = res.detected_objects[0];
-        if (!itemName.trim() || itemName === 'Campus Belonging') {
-          setItemName(top.label.charAt(0).toUpperCase() + top.label.slice(1));
-        }
-        if (res.suggested_category) {
-          const matched = categories.find(c => c.name.toLowerCase() === res.suggested_category?.toLowerCase());
-          if (matched) {
-            setCategoryId(matched.id);
-          }
-        }
-        setNinjaMessage(`Detected: ${res.detected_objects.map(o => `${o.label} (${Math.round(o.confidence * 100)}%)`).join(', ')}`);
-      } else {
-        setNinjaMessage('No objects detected by API Ninjas.');
-      }
-    } catch (err: any) {
-      if (err.message && err.message.includes('not configured')) {
-        setNinjaMessage('API Ninjas is not configured. Add API_NINJAS_API_KEY to backend/.env.');
-      } else {
-        setNinjaMessage(err.message || 'API Ninjas detection failed.');
-      }
-    } finally {
-      setNinjaScanning(false);
     }
   };
 
@@ -401,33 +310,18 @@ export const CreateReportPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Automatic Object Detection & Custody Matches */}
+              {/* Local-first status & Explicit Cloud AI Enhancement Bar */}
               <div className="flex flex-col gap-3">
-                {ninjaMessage && (
-                  <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-xs text-indigo-900 dark:text-indigo-200 flex items-start gap-2">
-                    <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
-                    <div>
-                      <span className="font-bold">{ninjaMessage}</span>
-                      <p className="text-[11px] text-indigo-700 dark:text-indigo-300 mt-0.5">
-                        Form title, category, and description have been automatically populated.
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {ninjaItems.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 pt-0.5">
-                    {ninjaItems.map((item, idx) => (
-                      <span
-                        key={idx}
-                        className="px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300 text-xs font-medium flex items-center gap-1.5"
-                      >
-                        <span className="font-bold capitalize">{item.label}</span>
-                        <span className="text-[10px] opacity-75 font-mono">{Math.round(item.confidence * 100)}%</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <EnhancedDetectionBar
+                  hasImage={!!imagePreview}
+                  isLocalScanning={isLocalScanning}
+                  isEnhancedScanning={isEnhancedScanning}
+                  detectionStatus={detectionStatus}
+                  showConsentModal={showConsentModal}
+                  onRequestEnhancedScan={requestEnhancedScan}
+                  onConfirmEnhancedScan={confirmEnhancedScan}
+                  onDismissConsentModal={dismissConsentModal}
+                />
 
                 {/* Teacher Alert Success Banner */}
                 {alertSuccess && (
@@ -517,13 +411,6 @@ export const CreateReportPage: React.FC = () => {
               />
             </label>
           )}
-
-          {analyzingImage && (
-            <div className="flex items-center gap-2.5 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 animate-pulse">
-              <div className="w-3.5 h-3.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin shrink-0" />
-              <span className="font-medium">Preparing item details…</span>
-            </div>
-          )}
         </div>
 
         {/* Section 2: Core Details */}
@@ -540,7 +427,10 @@ export const CreateReportPage: React.FC = () => {
               <input
                 type="text"
                 value={itemName}
-                onChange={(e) => setItemName(e.target.value)}
+                onChange={(e) => {
+                  setItemName(e.target.value);
+                  markFieldEdited('itemName');
+                }}
                 placeholder="e.g. 13-inch Silver MacBook Air, Dark Blue North Face Backpack"
                 className="block w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900 placeholder-slate-400"
                 required
@@ -553,7 +443,10 @@ export const CreateReportPage: React.FC = () => {
               </label>
               <select
                 value={categoryId}
-                onChange={(e) => setCategoryId(Number(e.target.value))}
+                onChange={(e) => {
+                  setCategoryId(Number(e.target.value));
+                  markFieldEdited('categoryId');
+                }}
                 className="block w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900"
                 required
               >
@@ -621,7 +514,10 @@ export const CreateReportPage: React.FC = () => {
               <input
                 type="text"
                 value={color}
-                onChange={(e) => setColor(e.target.value)}
+                onChange={(e) => {
+                  setColor(e.target.value);
+                  markFieldEdited('color');
+                }}
                 placeholder="e.g. Silver/Gray, Black, Navy"
                 className="block w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900 placeholder-slate-400"
               />
@@ -676,7 +572,10 @@ export const CreateReportPage: React.FC = () => {
               <textarea
                 rows={3}
                 value={detailedDescription}
-                onChange={(e) => setDetailedDescription(e.target.value)}
+                onChange={(e) => {
+                  setDetailedDescription(e.target.value);
+                  markFieldEdited('description');
+                }}
                 placeholder="Describe circumstances, exact study desk / bench location, contents, or condition..."
                 className="block w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900 placeholder-slate-400"
                 required

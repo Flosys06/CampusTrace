@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 
 from app.database import get_db
 from app.models.user import User, UserRole
@@ -133,10 +133,12 @@ def login(request: Request, payload: LoginRequest, db: Session = Depends(get_db)
     Returns signed JWT access token with tenant context.
     """
     ident = payload.username_or_email.strip()
+    ident_lower = ident.lower()
     user = db.query(User).filter(
         or_(
-            User.email == ident.lower(),
-            User.institutional_id == ident
+            func.lower(User.email) == ident_lower,
+            func.lower(User.institutional_id) == ident_lower,
+            func.lower(User.student_id_usn) == ident_lower
         )
     ).first()
 
@@ -181,7 +183,7 @@ def login(request: Request, payload: LoginRequest, db: Session = Depends(get_db)
         actor_user_id=user.id,
         college_id=college_id,
         metadata={"role": user.role.value, "college_id": college_id},
-        ip_address=request.client.host if request.client else None
+        ip_address=request.client.host if request and request.client else None
     )
 
     return Token(

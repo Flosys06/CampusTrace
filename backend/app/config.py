@@ -54,7 +54,13 @@ class Settings:
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
     
     # Database
-    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/campustrace.db")
+    @property
+    def DATABASE_URL(self) -> str:
+        env_val = os.getenv("DATABASE_URL")
+        if not env_val or env_val in ("sqlite:///./campustrace.db", "sqlite:///campustrace.db"):
+            backend_db = BASE_DIR / "campustrace.db"
+            return f"sqlite:///{backend_db.as_posix()}"
+        return env_val
     
     # Storage
     UPLOAD_DIR: Path = BASE_DIR / "uploads"
