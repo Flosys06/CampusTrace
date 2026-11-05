@@ -30,29 +30,100 @@ logger = logging.getLogger(__name__)
 
 # Map standard COCO labels from API Ninjas to CampusTrace category names
 LABEL_TO_CATEGORY: Dict[str, str] = {
+    # Bags & Backpacks
     "backpack": "Bags & Backpacks",
     "handbag": "Bags & Backpacks",
     "suitcase": "Bags & Backpacks",
     "briefcase": "Bags & Backpacks",
-    "laptop": "Electronics & Gadgets",
-    "cell phone": "Electronics & Gadgets",
-    "mouse": "Electronics & Gadgets",
-    "keyboard": "Electronics & Gadgets",
-    "remote": "Electronics & Gadgets",
-    "tv": "Electronics & Gadgets",
-    "bottle": "Bottles & Lunchboxes",
-    "cup": "Bottles & Lunchboxes",
-    "fork": "Bottles & Lunchboxes",
-    "knife": "Bottles & Lunchboxes",
-    "spoon": "Bottles & Lunchboxes",
-    "bowl": "Bottles & Lunchboxes",
-    "book": "Books & Study Material",
-    "umbrella": "Accessories & Umbrellas",
-    "tie": "Clothing & Apparel",
-    "shoe": "Clothing & Apparel",
-    "hat": "Clothing & Apparel",
-    "clock": "Accessories & Umbrellas",
-    "scissors": "Stationery & Supplies",
+    "bag": "Bags & Backpacks",
+    "tote": "Bags & Backpacks",
+    "duffel": "Bags & Backpacks",
+
+    # Electronics
+    "laptop": "Electronics",
+    "cell phone": "Electronics",
+    "smartphone": "Electronics",
+    "phone": "Electronics",
+    "tablet": "Electronics",
+    "mouse": "Electronics",
+    "keyboard": "Electronics",
+    "remote": "Electronics",
+    "calculator": "Electronics",
+    "tv": "Electronics",
+    "charger": "Electronics",
+
+    # Audio & Headphones
+    "headphones": "Audio & Headphones",
+    "earphones": "Audio & Headphones",
+    "earbuds": "Audio & Headphones",
+    "speaker": "Audio & Headphones",
+
+    # Water Bottles & Flasks
+    "bottle": "Water Bottles & Flasks",
+    "water bottle": "Water Bottles & Flasks",
+    "cup": "Water Bottles & Flasks",
+    "mug": "Water Bottles & Flasks",
+    "flask": "Water Bottles & Flasks",
+    "tumbler": "Water Bottles & Flasks",
+    "thermos": "Water Bottles & Flasks",
+    "fork": "Water Bottles & Flasks",
+    "knife": "Water Bottles & Flasks",
+    "spoon": "Water Bottles & Flasks",
+    "bowl": "Water Bottles & Flasks",
+
+    # Books & Stationery
+    "book": "Books & Stationery",
+    "notebook": "Books & Stationery",
+    "textbook": "Books & Stationery",
+    "pen": "Books & Stationery",
+    "ballpoint": "Books & Stationery",
+    "fountain pen": "Books & Stationery",
+    "pencil": "Books & Stationery",
+    "marker": "Books & Stationery",
+    "pencil box": "Books & Stationery",
+    "pencil case": "Books & Stationery",
+    "binder": "Books & Stationery",
+    "folder": "Books & Stationery",
+    "scissors": "Books & Stationery",
+    "ruler": "Books & Stationery",
+    "eraser": "Books & Stationery",
+    "stationery": "Books & Stationery",
+
+    # IDs, Cards & Wallets
+    "wallet": "IDs, Cards & Wallets",
+    "purse": "IDs, Cards & Wallets",
+    "card": "IDs, Cards & Wallets",
+    "id": "IDs, Cards & Wallets",
+    "badge": "IDs, Cards & Wallets",
+
+    # Keys & Access Badges
+    "key": "Keys & Access Badges",
+    "keys": "Keys & Access Badges",
+    "keychain": "Keys & Access Badges",
+    "lock": "Keys & Access Badges",
+    "padlock": "Keys & Access Badges",
+    "lanyard": "Keys & Access Badges",
+
+    # Eyewear & Accessories
+    "watch": "Eyewear & Accessories",
+    "smartwatch": "Eyewear & Accessories",
+    "clock": "Eyewear & Accessories",
+    "glasses": "Eyewear & Accessories",
+    "sunglasses": "Eyewear & Accessories",
+    "spectacles": "Eyewear & Accessories",
+    "umbrella": "Eyewear & Accessories",
+
+    # Apparel & Outerwear
+    "tie": "Apparel & Outerwear",
+    "shoe": "Apparel & Outerwear",
+    "shoes": "Apparel & Outerwear",
+    "hat": "Apparel & Outerwear",
+    "cap": "Apparel & Outerwear",
+    "jacket": "Apparel & Outerwear",
+    "hoodie": "Apparel & Outerwear",
+    "coat": "Apparel & Outerwear",
+    "sweater": "Apparel & Outerwear",
+    "shirt": "Apparel & Outerwear",
 }
 
 class NinjaDetectionService:
@@ -467,7 +538,19 @@ class NinjaDetectionService:
 
             # Check category compatibility
             cat_match = False
-            if suggested_cat.lower() in cat_name.lower() or cat_name.lower() in suggested_cat.lower():
+            s_low = suggested_cat.lower()
+            c_low = cat_name.lower()
+            if s_low in c_low or c_low in s_low:
+                cat_match = True
+            elif any(w in c_low for w in ["bottle", "flask", "tumbler"]) and any(w in s_low for w in ["bottle", "flask", "tumbler"]):
+                cat_match = True
+            elif any(w in c_low for w in ["book", "study", "stationery"]) and any(w in s_low for w in ["book", "study", "stationery"]):
+                cat_match = True
+            elif any(w in c_low for w in ["electronic", "gadget"]) and any(w in s_low for w in ["electronic", "gadget"]):
+                cat_match = True
+            elif any(w in c_low for w in ["apparel", "clothing", "outerwear"]) and any(w in s_low for w in ["apparel", "clothing", "outerwear"]):
+                cat_match = True
+            elif any(w in c_low for w in ["eyewear", "accessories"]) and any(w in s_low for w in ["eyewear", "accessories"]):
                 cat_match = True
 
             # Check object label in title or description

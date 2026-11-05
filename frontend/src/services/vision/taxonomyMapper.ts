@@ -127,10 +127,10 @@ export const IMAGENET_CAMPUS_MAP: Record<string, CategoryMapping> = {
 
   // Electronics & Audio
   'cellular_telephone': { categoryName: 'Electronics', cleanName: 'Smartphone', defaultDescriptor: 'handheld smartphone device' },
-  'notebook': { categoryName: 'Electronics', cleanName: 'Laptop', defaultDescriptor: 'compact notebook computer' },
+  'laptop': { categoryName: 'Electronics', cleanName: 'Laptop', defaultDescriptor: 'portable laptop computer' },
   'hand-held_computer': { categoryName: 'Electronics', cleanName: 'Tablet / Smart Device', defaultDescriptor: 'tablet device with touchscreen' },
-  'ipod': { categoryName: 'Electronics', cleanName: 'Audio Player / Earbuds Case', defaultDescriptor: 'portable audio device or case' },
-  'loudspeaker': { categoryName: 'Electronics', cleanName: 'Bluetooth Speaker', defaultDescriptor: 'wireless audio speaker' },
+  'ipod': { categoryName: 'Audio & Headphones', cleanName: 'Earbuds Case / Audio Device', defaultDescriptor: 'portable audio device or case' },
+  'loudspeaker': { categoryName: 'Audio & Headphones', cleanName: 'Bluetooth Speaker', defaultDescriptor: 'wireless audio speaker' },
   'hard_disc': { categoryName: 'Electronics', cleanName: 'External Storage Drive', defaultDescriptor: 'external hard drive or storage unit' },
   'mouse': { categoryName: 'Electronics', cleanName: 'Computer Mouse', defaultDescriptor: 'optical computer mouse' },
   'computer_keyboard': { categoryName: 'Electronics', cleanName: 'Computer Keyboard', defaultDescriptor: 'keyboard peripheral' },
@@ -138,11 +138,12 @@ export const IMAGENET_CAMPUS_MAP: Record<string, CategoryMapping> = {
   // Water bottles & cups
   'water_bottle': { categoryName: 'Water Bottles & Flasks', cleanName: 'Water Bottle', defaultDescriptor: 'hydration bottle or insulated flask' },
   'pop_bottle': { categoryName: 'Water Bottles & Flasks', cleanName: 'Beverage Bottle', defaultDescriptor: 'drink bottle with seal cap' },
+  'beer_bottle': { categoryName: 'Water Bottles & Flasks', cleanName: 'Bottle / Flask', defaultDescriptor: 'beverage bottle' },
   'coffee_mug': { categoryName: 'Water Bottles & Flasks', cleanName: 'Coffee Mug', defaultDescriptor: 'ceramic or travel coffee mug' },
   'cup': { categoryName: 'Water Bottles & Flasks', cleanName: 'Drinking Tumbler', defaultDescriptor: 'reusable beverage cup' },
 
   // Keys & Locks
-  'padlock': { categoryName: 'Keys & Access Badges', cleanName: 'Padlock / Keys', defaultDescriptor: 'security padlock or key set' },
+  'padlock': { categoryName: 'Keys & Access Badges', cleanName: 'Keys / Padlock', defaultDescriptor: 'security padlock or key set' },
   'combination_lock': { categoryName: 'Keys & Access Badges', cleanName: 'Combination Lock / Keys', defaultDescriptor: 'dial lock or campus keys' },
 
   // Eyewear & Watches
@@ -150,20 +151,30 @@ export const IMAGENET_CAMPUS_MAP: Record<string, CategoryMapping> = {
   'sunglass': { categoryName: 'Eyewear & Accessories', cleanName: 'Spectacles / Glasses', defaultDescriptor: 'prescription glasses or frames' },
   'digital_watch': { categoryName: 'Eyewear & Accessories', cleanName: 'Smartwatch / Digital Watch', defaultDescriptor: 'digital wrist timepiece or fitness band' },
   'analog_clock': { categoryName: 'Eyewear & Accessories', cleanName: 'Analog Watch', defaultDescriptor: 'analog wristwatch with strap' },
+  'digital_clock': { categoryName: 'Eyewear & Accessories', cleanName: 'Digital Watch / Clock', defaultDescriptor: 'digital timekeeping display' },
+  'stopwatch': { categoryName: 'Eyewear & Accessories', cleanName: 'Sports Watch / Stopwatch', defaultDescriptor: 'timekeeping watch or device' },
   'umbrella': { categoryName: 'Eyewear & Accessories', cleanName: 'Umbrella', defaultDescriptor: 'compact folding umbrella' },
   'crash_helmet': { categoryName: 'Eyewear & Accessories', cleanName: 'Riding Helmet', defaultDescriptor: 'two-wheeler safety helmet' },
 
-  // Books & Stationery
-  'binder': { categoryName: 'Books & Stationery', cleanName: 'Folder / Binder', defaultDescriptor: 'document binder or portfolio folder' },
-  'pencil_box': { categoryName: 'Books & Stationery', cleanName: 'Pencil Case', defaultDescriptor: 'stationery pouch or pencil case' },
-  'pencil_sharpener': { categoryName: 'Books & Stationery', cleanName: 'Stationery Accessory', defaultDescriptor: 'desk or study supply item' },
-  'fountain_pen': { categoryName: 'Books & Stationery', cleanName: 'Pen / Marker', defaultDescriptor: 'writing instrument or stylus' },
+  // Books & Stationery (Enhanced with pens, notebooks, textbooks, erasers, rulers)
+  'ballpoint': { categoryName: 'Books & Stationery', cleanName: 'Ballpoint Pen', defaultDescriptor: 'ballpoint pen or writing instrument' },
+  'fountain_pen': { categoryName: 'Books & Stationery', cleanName: 'Pen / Marker', defaultDescriptor: 'fountain pen, marker, or stylus' },
+  'book_jacket': { categoryName: 'Books & Stationery', cleanName: 'Textbook / Book', defaultDescriptor: 'academic textbook, hardcover, or study book' },
+  'comic_book': { categoryName: 'Books & Stationery', cleanName: 'Book / Study Material', defaultDescriptor: 'book, study notes, or reading material' },
+  'notebook': { categoryName: 'Books & Stationery', cleanName: 'Notebook / Study Notes', defaultDescriptor: 'spiral-bound study notebook, diary, or journal' },
+  'binder': { categoryName: 'Books & Stationery', cleanName: 'Folder / Binder', defaultDescriptor: 'document binder, file folder, or study portfolio' },
+  'pencil_box': { categoryName: 'Books & Stationery', cleanName: 'Pencil Case / Pouch', defaultDescriptor: 'stationery pouch or pencil case' },
+  'pencil_sharpener': { categoryName: 'Books & Stationery', cleanName: 'Pencil Sharpener', defaultDescriptor: 'desk or study supply item' },
+  'rubber_eraser': { categoryName: 'Books & Stationery', cleanName: 'Stationery Eraser', defaultDescriptor: 'rubber eraser or stationery correction tool' },
+  'slide_rule': { categoryName: 'Books & Stationery', cleanName: 'Scale / Ruler', defaultDescriptor: 'measuring ruler, scale, or engineering drafter' },
+  'envelope': { categoryName: 'Books & Stationery', cleanName: 'Document Envelope / Folder', defaultDescriptor: 'paper envelope or document folder' },
 
   // Apparel & Jackets
   'cardigan': { categoryName: 'Apparel & Outerwear', cleanName: 'Cardigan / Jacket', defaultDescriptor: 'buttoned outerwear or light jacket' },
   'sweatshirt': { categoryName: 'Apparel & Outerwear', cleanName: 'Hoodie / Sweatshirt', defaultDescriptor: 'pullover hoodie or sweatshirt' },
   'lab_coat': { categoryName: 'Apparel & Outerwear', cleanName: 'College Lab Coat', defaultDescriptor: 'white academic lab coat' },
-  'suit': { categoryName: 'Apparel & Outerwear', cleanName: 'Blazer / Formal Coat', defaultDescriptor: 'tailored blazer or formal coat' }
+  'suit': { categoryName: 'Apparel & Outerwear', cleanName: 'Blazer / Formal Coat', defaultDescriptor: 'tailored blazer or formal coat' },
+  'trench_coat': { categoryName: 'Apparel & Outerwear', cleanName: 'Jacket / Overcoat', defaultDescriptor: 'long jacket or outerwear' }
 };
 
 /**

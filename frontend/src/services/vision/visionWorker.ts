@@ -21,7 +21,7 @@ self.onmessage = async (e: MessageEvent) => {
 
   if (type === 'PREWARM') {
     try {
-      await yoloDetector.initialize('/models/yolov5n.onnx');
+      await yoloDetector.initialize('/models/yolov5s.onnx');
       self.postMessage({ id, status: 'READY' });
     } catch (err: any) {
       self.postMessage({ id, status: 'ERROR', error: err.message });
@@ -78,6 +78,7 @@ self.onmessage = async (e: MessageEvent) => {
       const colorResult = extractDominantColor(ctx as any, cropBox.x, cropBox.y, cropBox.width, cropBox.height);
       const dominantColor = colorResult.primaryColor;
 
+      // Secondary Stage: MobileNetV2 Whitelist Verification (Enhanced for Pens, Books, Stationery)
       let secondaryUsed = false;
       let cleanName = bestItem ? bestItem.cleanName : 'Campus Belonging';
       let categoryName = bestItem ? bestItem.categoryName : 'Other Belongings';
@@ -86,7 +87,22 @@ self.onmessage = async (e: MessageEvent) => {
         ? COCO_CAMPUS_MAP[bestItem.className]?.defaultDescriptor || 'campus item'
         : 'personal item';
 
-      if (!bestItem || bestItem.confidence < 0.45) {
+      const cropAspectRatio =
+        Math.max(cropBox.width, cropBox.height) / Math.max(1, Math.min(cropBox.width, cropBox.height));
+      const isElongated = cropAspectRatio >= 2.5;
+
+      const isThinProxyItem =
+        bestItem &&
+        ['toothbrush', 'knife', 'scissors', 'remote', 'cell phone', 'baseball bat'].includes(bestItem.className);
+
+      const shouldRunSecondary =
+        !bestItem ||
+        bestItem.confidence < 0.55 ||
+        isThinProxyItem ||
+        isElongated ||
+        bestItem.className === 'book';
+
+      if (shouldRunSecondary) {
         try {
           const mobResult = await mobileNetClassifier.classify(
             canvas,
@@ -95,12 +111,21 @@ self.onmessage = async (e: MessageEvent) => {
             cropBox.width,
             cropBox.height
           );
-          if (mobResult && mobResult.confidence > 0.15) {
-            secondaryUsed = true;
-            cleanName = mobResult.cleanName;
-            categoryName = mobResult.categoryName;
-            confidence = Math.max(confidence, mobResult.confidence);
-            defaultDescriptor = 'identified via campus item catalog';
+          if (mobResult && mobResult.confidence >= 0.035) {
+            const isHigherPriority =
+              !bestItem ||
+              isThinProxyItem ||
+              mobResult.categoryName === 'Books & Stationery' ||
+              (mobResult.confidence * 4.0 > bestItem.confidence);
+
+            if (isHigherPriority) {
+              secondaryUsed = true;
+              cleanName = mobResult.cleanName;
+              categoryName = mobResult.categoryName;
+              const boostedScore = Math.min(0.94, Math.max(0.65, mobResult.confidence * 4.5));
+              confidence = Math.max(confidence, boostedScore);
+              defaultDescriptor = 'identified via high-accuracy campus item catalog';
+            }
           }
         } catch (err) {
           console.warn('Worker MobileNet error:', err);
@@ -139,9 +164,9 @@ self.onmessage = async (e: MessageEvent) => {
 
       const totalTimeMs = Math.round(performance.now() - startTime);
       const modelEngine = secondaryUsed
-        ? 'YOLOv5n + MobileNetV2 (Worker)'
+        ? 'YOLOv5s + MobileNetV2 (Worker)'
         : bestItem
-        ? 'YOLOv5n (Worker Nano)'
+        ? 'YOLOv5s (Worker Small)'
         : 'Color & Texture Analyzer (Worker)';
 
       const headline = finalTitle;

@@ -146,8 +146,12 @@ export class MobileNetClassifier {
     const classes = this.classesMap;
     if (!classes) return null;
 
-    // Check top 15 predictions against campus whitelist
-    for (let k = 0; k < Math.min(15, indices.length); k++) {
+    // Check top 25 predictions against campus whitelist
+    // For 1000-class softmax, random chance is 0.001. A probability of >= 0.035 represents strong activation.
+    let bestMatch: MobileNetPrediction | null = null;
+    let highestScore = 0;
+
+    for (let k = 0; k < Math.min(25, indices.length); k++) {
       const idx = indices[k];
       const prob = probs[idx];
       const classEntry: [string, string] | undefined = classes[String(idx)];
@@ -156,16 +160,23 @@ export class MobileNetClassifier {
       const rawLabel = classEntry[1];
       if (IMAGENET_CAMPUS_MAP[rawLabel]) {
         const mapping = IMAGENET_CAMPUS_MAP[rawLabel];
-        return {
-          rawLabel,
-          categoryName: mapping.categoryName,
-          cleanName: mapping.cleanName,
-          confidence: Math.round(prob * 1000) / 1000,
-        };
+        // Rank-decay weighted score to favor higher rank while still discovering stationery
+        const rankWeight = 1.0 / (1.0 + k * 0.08);
+        const score = prob * rankWeight;
+
+        if (score > highestScore && prob >= 0.035) {
+          highestScore = score;
+          bestMatch = {
+            rawLabel,
+            categoryName: mapping.categoryName,
+            cleanName: mapping.cleanName,
+            confidence: Math.round(prob * 1000) / 1000,
+          };
+        }
       }
     }
 
-    return null;
+    return bestMatch;
   }
 }
 

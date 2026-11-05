@@ -56,3 +56,7 @@ backend/uploads/*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Ignored Testing Notes
+TESTING.md
+

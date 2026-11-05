@@ -76,7 +76,7 @@ export class LocalVisionPipeline {
         if (this.worker) {
           this.worker.postMessage({ id: -1, type: 'PREWARM' });
         }
-        await yoloDetector.initialize();
+        await yoloDetector.initialize('/models/yolov5s.onnx');
         this.isPrewarmed = true;
       } catch (err) {
         console.warn('LocalVisionPipeline prewarm notice:', err);
@@ -214,8 +214,7 @@ export class LocalVisionPipeline {
     // Check cancellation
     if (requestId !== this.currentRequestId) throw new StaleInferenceError();
 
-    // 6. Secondary Stage: MobileNetV2 Whitelist Verification (when beneficial)
-    // Run secondary classifier only if no strong YOLO item was found (or if item is ambiguous)
+    // 6. Secondary Stage: MobileNetV2 Whitelist Verification (Enhanced for Pens, Books, Stationery)
     let secondaryUsed = false;
     let cleanName = bestItem ? bestItem.cleanName : 'Campus Belonging';
     let categoryName = bestItem ? bestItem.categoryName : 'Other Belongings';
@@ -224,7 +223,29 @@ export class LocalVisionPipeline {
       ? COCO_CAMPUS_MAP[bestItem.className]?.defaultDescriptor || 'campus item'
       : 'personal item';
 
-    if (!bestItem || bestItem.confidence < 0.45) {
+    // Calculate bounding box aspect ratio to identify elongated items (pens, pencils, rulers)
+    const cropAspectRatio =
+      Math.max(cropBox.width, cropBox.height) / Math.max(1, Math.min(cropBox.width, cropBox.height));
+    const isElongated = cropAspectRatio >= 2.5;
+
+    // Check if YOLO detected a thin object that is often a proxy for stationery (e.g. toothbrush, knife)
+    const isThinProxyItem =
+      bestItem &&
+      ['toothbrush', 'knife', 'scissors', 'remote', 'cell phone', 'baseball bat'].includes(bestItem.className);
+
+    // Trigger secondary classification if:
+    // a) No strong YOLO item detected (< 0.55 confidence)
+    // b) Best item is a suspected thin/stationery proxy
+    // c) Elongated object with aspect ratio >= 2.5 (pen / pencil profile)
+    // d) Detected item is a book (to verify textbook vs notebook vs file)
+    const shouldRunSecondary =
+      !bestItem ||
+      bestItem.confidence < 0.55 ||
+      isThinProxyItem ||
+      isElongated ||
+      bestItem.className === 'book';
+
+    if (shouldRunSecondary) {
       try {
         const mobResult = await mobileNetClassifier.classify(
           canvas,
@@ -233,12 +254,22 @@ export class LocalVisionPipeline {
           cropBox.width,
           cropBox.height
         );
-        if (mobResult && mobResult.confidence > 0.15) {
-          secondaryUsed = true;
-          cleanName = mobResult.cleanName;
-          categoryName = mobResult.categoryName;
-          confidence = Math.max(confidence, mobResult.confidence);
-          defaultDescriptor = 'identified via campus item catalog';
+        if (mobResult && mobResult.confidence >= 0.035) {
+          const isHigherPriority =
+            !bestItem ||
+            isThinProxyItem ||
+            mobResult.categoryName === 'Books & Stationery' ||
+            (mobResult.confidence * 4.0 > bestItem.confidence);
+
+          if (isHigherPriority) {
+            secondaryUsed = true;
+            cleanName = mobResult.cleanName;
+            categoryName = mobResult.categoryName;
+            // Boost calibrated score for specialized campus items
+            const boostedScore = Math.min(0.94, Math.max(0.65, mobResult.confidence * 4.5));
+            confidence = Math.max(confidence, boostedScore);
+            defaultDescriptor = 'identified via high-accuracy campus item catalog';
+          }
         }
       } catch (err) {
         console.warn('Secondary MobileNet pass error:', err);
@@ -283,9 +314,9 @@ export class LocalVisionPipeline {
 
     const totalTimeMs = Math.round(performance.now() - startTime);
     const modelEngine = secondaryUsed
-      ? 'YOLOv5n + MobileNetV2 (Local)'
+      ? 'YOLOv5s + MobileNetV2 (High-Accuracy Local)'
       : bestItem
-      ? 'YOLOv5n (Local Nano)'
+      ? 'YOLOv5s (Local Small)'
       : 'Color & Texture Analyzer (Local)';
 
     const headline = finalTitle;

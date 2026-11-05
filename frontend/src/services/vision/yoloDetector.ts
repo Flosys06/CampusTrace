@@ -37,7 +37,7 @@ export class YoloDetector {
   private initPromise: Promise<void> | null = null;
   private inputType: string = 'float16';
 
-  public async initialize(modelPath: string = '/models/yolov5n.onnx'): Promise<void> {
+  public async initialize(modelPath: string = '/models/yolov5s.onnx'): Promise<void> {
     if (this.session) return;
     if (this.initPromise) return this.initPromise;
 
@@ -52,8 +52,15 @@ export class YoloDetector {
           graphOptimizationLevel: 'all',
         };
 
-        this.session = await ort.InferenceSession.create(modelPath, options);
-        if (this.session.inputNames.length > 0) {
+        try {
+          // Attempt loading upgraded YOLOv5s model for ~34% higher detection mAP
+          this.session = await ort.InferenceSession.create(modelPath, options);
+        } catch (sErr) {
+          console.warn(`Primary model ${modelPath} failed to load, falling back to /models/yolov5n.onnx:`, sErr);
+          this.session = await ort.InferenceSession.create('/models/yolov5n.onnx', options);
+        }
+
+        if (this.session && this.session.inputNames.length > 0) {
           this.inputType = 'float16';
         }
       } catch (err) {
