@@ -648,14 +648,32 @@ VTU_AFFILIATED_COLLEGES = [
     }
 ]
 
-def setup_clean_system():
+def setup_clean_system(include_users: bool = False):
     """
     Initializes clean database schema and provisions all VTU affiliated colleges,
-    categories, and institutional administration without any fake lost-and-found records.
+    categories, and campus locations without any user entries.
     """
     print("=" * 60)
     print("CampusTrace — VTU Multi-Tenant Clean Database Setup")
     print("=" * 60)
+
+    # Clean uploads directory
+    upload_dir = BASE_DIR / "uploads"
+    if upload_dir.exists():
+        for file_item in upload_dir.iterdir():
+            if file_item.is_file():
+                try:
+                    file_item.unlink()
+                except Exception:
+                    pass
+
+    # Clean root redundant campustrace.db if present
+    root_db = BASE_DIR.parent / "campustrace.db"
+    if root_db.exists():
+        try:
+            root_db.unlink()
+        except Exception:
+            pass
 
     print("Re-creating clean database tables...")
     Base.metadata.drop_all(bind=engine)
@@ -777,115 +795,119 @@ def setup_clean_system():
         db.commit()
         print(f"   [+] Created {len(storages)} storage facilities.")
 
-        print("\n5. Provisioning System Administrators...")
-        # 1. Platform Administrator (Oversees all VTU colleges)
-        platform_admin = User(
-            email="platform.admin@campustrace.edu",
-            password_hash=hash_password("PlatformSuper@2026"),
-            full_name="CampusTrace VTU Platform Overseer",
-            institutional_id="VTU-PLATFORM-01",
-            role=UserRole.PLATFORM_ADMIN,
-            is_active=True,
-            college_id=None
-        )
-        db.add(platform_admin)
+        if include_users:
+            print("\n5. Provisioning System Administrators...")
+            # 1. Platform Administrator (Oversees all VTU colleges)
+            platform_admin = User(
+                email="platform.admin@campustrace.edu",
+                password_hash=hash_password("PlatformSuper@2026"),
+                full_name="CampusTrace VTU Platform Overseer",
+                institutional_id="VTU-PLATFORM-01",
+                role=UserRole.PLATFORM_ADMIN,
+                is_active=True,
+                college_id=None
+            )
+            db.add(platform_admin)
 
-        # 2. RVCE Institutional Administrator & Staff Custodian
-        if rvce:
-            rvce_admin = User(
-                email="admin@rvce.edu.in",
-                password_hash=hash_password("RVCEAdmin@2026"),
-                full_name="Dr. K. N. Subramanya",
-                institutional_id="ADMIN-RVCE-01",
-                role=UserRole.COLLEGE_ADMIN,
-                is_active=True,
-                college_id=rvce.id,
-                department="Principal & Dean of Students",
-                phone_number="+91 80 6818 8100"
-            )
-            rvce_teacher = User(
-                email="staff.custodian@rvce.edu.in",
-                password_hash=hash_password("RVCEStaff@2026"),
-                full_name="Prof. Suresh Kumar",
-                institutional_id="STAFF-RVCE-01",
-                role=UserRole.TEACHER,
-                is_active=True,
-                college_id=rvce.id,
-                department="Department of Student Welfare & Custody",
-                phone_number="+91 80 6818 8101"
-            )
-            db.add(rvce_admin)
-            db.add(rvce_teacher)
+            # 2. RVCE Institutional Administrator & Staff Custodian
+            if rvce:
+                rvce_admin = User(
+                    email="admin@rvce.edu.in",
+                    password_hash=hash_password("RVCEAdmin@2026"),
+                    full_name="Dr. K. N. Subramanya",
+                    institutional_id="ADMIN-RVCE-01",
+                    role=UserRole.COLLEGE_ADMIN,
+                    is_active=True,
+                    college_id=rvce.id,
+                    department="Principal & Dean of Students",
+                    phone_number="+91 80 6818 8100"
+                )
+                rvce_teacher = User(
+                    email="staff.custodian@rvce.edu.in",
+                    password_hash=hash_password("RVCEStaff@2026"),
+                    full_name="Prof. Suresh Kumar",
+                    institutional_id="STAFF-RVCE-01",
+                    role=UserRole.TEACHER,
+                    is_active=True,
+                    college_id=rvce.id,
+                    department="Department of Student Welfare & Custody",
+                    phone_number="+91 80 6818 8101"
+                )
+                db.add(rvce_admin)
+                db.add(rvce_teacher)
 
-        # 3. MSRIT Institutional Administrator & Staff Custodian
-        if msrit:
-            msrit_admin = User(
-                email="admin@msrit.edu",
-                password_hash=hash_password("MSRITAdmin@2026"),
-                full_name="Dr. N. V. R. Naidu",
-                institutional_id="ADMIN-MSRIT-01",
-                role=UserRole.COLLEGE_ADMIN,
-                is_active=True,
-                college_id=msrit.id,
-                department="Dean of Student Affairs",
-                phone_number="+91 80 2360 0822"
-            )
-            msrit_teacher = User(
-                email="staff.custodian@msrit.edu",
-                password_hash=hash_password("MSRITStaff@2026"),
-                full_name="Prof. Anitha Rao",
-                institutional_id="STAFF-MSRIT-01",
-                role=UserRole.TEACHER,
-                is_active=True,
-                college_id=msrit.id,
-                department="Proctorial Office & Campus Custody",
-                phone_number="+91 80 2360 0825"
-            )
-            db.add(msrit_admin)
-            db.add(msrit_teacher)
+            # 3. MSRIT Institutional Administrator & Staff Custodian
+            if msrit:
+                msrit_admin = User(
+                    email="admin@msrit.edu",
+                    password_hash=hash_password("MSRITAdmin@2026"),
+                    full_name="Dr. N. V. R. Naidu",
+                    institutional_id="ADMIN-MSRIT-01",
+                    role=UserRole.COLLEGE_ADMIN,
+                    is_active=True,
+                    college_id=msrit.id,
+                    department="Dean of Student Affairs",
+                    phone_number="+91 80 2360 0822"
+                )
+                msrit_teacher = User(
+                    email="staff.custodian@msrit.edu",
+                    password_hash=hash_password("MSRITStaff@2026"),
+                    full_name="Prof. Anitha Rao",
+                    institutional_id="STAFF-MSRIT-01",
+                    role=UserRole.TEACHER,
+                    is_active=True,
+                    college_id=msrit.id,
+                    department="Proctorial Office & Campus Custody",
+                    phone_number="+91 80 2360 0825"
+                )
+                db.add(msrit_admin)
+                db.add(msrit_teacher)
 
-        # 4. KSSEM Institutional Administrator & Staff Custodian
-        if kssem:
-            kssem_admin = User(
-                email="admin@kssem.edu.in",
-                password_hash=hash_password("KSSEMAdmin@2026"),
-                full_name="Dr. K. Rama Narasimha",
-                institutional_id="ADMIN-KSSEM-01",
-                role=UserRole.COLLEGE_ADMIN,
-                is_active=True,
-                college_id=kssem.id,
-                department="Principal & Head of Institution",
-                phone_number="+91 80 2842 5012"
-            )
-            kssem_teacher = User(
-                email="staff.custodian@kssem.edu.in",
-                password_hash=hash_password("KSSEMStaff@2026"),
-                full_name="Prof. B. K. Manjunath",
-                institutional_id="STAFF-KSSEM-01",
-                role=UserRole.TEACHER,
-                is_active=True,
-                college_id=kssem.id,
-                department="Department of Student Affairs & Security",
-                phone_number="+91 80 2842 5013"
-            )
-            db.add(kssem_admin)
-            db.add(kssem_teacher)
+            # 4. KSSEM Institutional Administrator & Staff Custodian
+            if kssem:
+                kssem_admin = User(
+                    email="admin@kssem.edu.in",
+                    password_hash=hash_password("KSSEMAdmin@2026"),
+                    full_name="Dr. K. Rama Narasimha",
+                    institutional_id="ADMIN-KSSEM-01",
+                    role=UserRole.COLLEGE_ADMIN,
+                    is_active=True,
+                    college_id=kssem.id,
+                    department="Principal & Head of Institution",
+                    phone_number="+91 80 2842 5012"
+                )
+                kssem_teacher = User(
+                    email="staff.custodian@kssem.edu.in",
+                    password_hash=hash_password("KSSEMStaff@2026"),
+                    full_name="Prof. B. K. Manjunath",
+                    institutional_id="STAFF-KSSEM-01",
+                    role=UserRole.TEACHER,
+                    is_active=True,
+                    college_id=kssem.id,
+                    department="Department of Student Affairs & Security",
+                    phone_number="+91 80 2842 5013"
+                )
+                db.add(kssem_admin)
+                db.add(kssem_teacher)
 
-        db.commit()
-        print(f"   [+] Provisioned Platform Administrator (platform.admin@campustrace.edu)")
-        if rvce:
-            print(f"   [+] Provisioned College Administrator for {rvce.name} (admin@rvce.edu.in)")
-            print(f"   [+] Provisioned Custodial Staff for {rvce.name} (staff.custodian@rvce.edu.in)")
-        if msrit:
-            print(f"   [+] Provisioned College Administrator for {msrit.name} (admin@msrit.edu)")
-        if kssem:
-            print(f"   [+] Provisioned College Administrator for {kssem.name} (admin@kssem.edu.in)")
-            print(f"   [+] Provisioned Custodial Staff for {kssem.name} (staff.custodian@kssem.edu.in)")
+            db.commit()
+            print(f"   [+] Provisioned Platform Administrator (platform.admin@campustrace.edu)")
+            if rvce:
+                print(f"   [+] Provisioned College Administrator for {rvce.name} (admin@rvce.edu.in)")
+                print(f"   [+] Provisioned Custodial Staff for {rvce.name} (staff.custodian@rvce.edu.in)")
+            if msrit:
+                print(f"   [+] Provisioned College Administrator for {msrit.name} (admin@msrit.edu)")
+            if kssem:
+                print(f"   [+] Provisioned College Administrator for {kssem.name} (admin@kssem.edu.in)")
+                print(f"   [+] Provisioned Custodial Staff for {kssem.name} (staff.custodian@kssem.edu.in)")
+        else:
+            print("\n5. Skipping User Provisioning (0 user entries created, database completely user-free).")
 
         print("\n6. System Cleanliness Verification:")
+        user_count = db.query(User).count()
+        print(f"   - Total users: {user_count}")
         print("   - Fake lost reports: 0")
         print("   - Fake found reports: 0")
-        print("   - Fake student listings: 0")
         print("   - Fake claim records: 0")
         print(f"   - VTU Affiliated Colleges active: {len(college_objects)}")
         print("\nSystem ready for dynamic student registration with VTU institutions!")
@@ -899,4 +921,5 @@ def setup_clean_system():
         db.close()
 
 if __name__ == "__main__":
-    setup_clean_system()
+    with_users = "--with-users" in sys.argv
+    setup_clean_system(include_users=with_users)
