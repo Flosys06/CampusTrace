@@ -5,13 +5,14 @@
   "scripts": {
     "dev": "concurrently -k -p \"[{name}]\" -n \"BACKEND,FRONTEND\" -c \"blue.bold,green.bold\" \"npm run backend\" \"npm run dev:frontend\"",
     "dev:frontend": "npm --prefix frontend run dev",
-    "dev:backend": "python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --app-dir backend",
-    "backend": "python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --app-dir backend",
+    "dev:backend": "python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --app-dir backend",
+    "backend": "python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --app-dir backend",
     "frontend": "npm --prefix frontend run dev",
     "server": "npm run backend",
     "build": "npm --prefix frontend run build",
     "preview": "npm --prefix frontend run preview",
     "lint": "npm --prefix frontend run lint",
+    "seed:common": "python backend/seed_common_credentials.py",
     "reset-db": "python backend/setup_system.py",
     "seed": "python backend/seed.py"
   },

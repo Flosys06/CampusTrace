@@ -51,6 +51,7 @@ export default defineConfig({
   },
   assetsInclude: ['**/*.onnx', '**/*.wasm'],
   server: {
+    host: '0.0.0.0',
     port: 5173,
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
@@ -68,6 +69,7 @@ export default defineConfig({
     }
   },
   preview: {
+    host: '0.0.0.0',
     port: 5173,
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
