@@ -55,6 +55,9 @@ export const CreateReportPage: React.FC = () => {
   const {
     imageFile,
     imagePreview,
+    candidates,
+    selectedCandidateId,
+    selectCandidate,
     isLocalScanning,
     isEnhancedScanning,
     detectionStatus,
@@ -318,6 +321,9 @@ export const CreateReportPage: React.FC = () => {
                   isEnhancedScanning={isEnhancedScanning}
                   detectionStatus={detectionStatus}
                   showConsentModal={showConsentModal}
+                  candidates={candidates}
+                  selectedCandidateId={selectedCandidateId}
+                  onSelectCandidate={selectCandidate}
                   onRequestEnhancedScan={requestEnhancedScan}
                   onConfirmEnhancedScan={confirmEnhancedScan}
                   onDismissConsentModal={dismissConsentModal}

@@ -72,6 +72,9 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
   const {
     imageFile: capturedFile,
     imagePreview: capturedPreview,
+    candidates,
+    selectedCandidateId,
+    selectCandidate,
     isLocalScanning,
     isEnhancedScanning,
     detectionStatus,
@@ -464,6 +467,9 @@ export const CameraReportFlow: React.FC<CameraReportFlowProps> = ({
                   isEnhancedScanning={isEnhancedScanning}
                   detectionStatus={detectionStatus}
                   showConsentModal={showConsentModal}
+                  candidates={candidates}
+                  selectedCandidateId={selectedCandidateId}
+                  onSelectCandidate={selectCandidate}
                   onRequestEnhancedScan={requestEnhancedScan}
                   onConfirmEnhancedScan={confirmEnhancedScan}
                   onDismissConsentModal={dismissConsentModal}

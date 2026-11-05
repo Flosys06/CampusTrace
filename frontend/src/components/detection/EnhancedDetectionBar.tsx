@@ -1,6 +1,7 @@
 import React from 'react';
-import { Sparkles, Loader2, ShieldCheck, AlertCircle, X, CheckCircle2 } from 'lucide-react';
+import { Sparkles, Loader2, ShieldCheck, AlertCircle, X, CheckCircle2, Layers } from 'lucide-react';
 import { DetectionStatusInfo } from '../../services/detection/useReportDetection';
+import { DetectedCandidate } from '../../services/vision/types';
 
 interface EnhancedDetectionBarProps {
   hasImage: boolean;
@@ -8,6 +9,9 @@ interface EnhancedDetectionBarProps {
   isEnhancedScanning: boolean;
   detectionStatus: DetectionStatusInfo | null;
   showConsentModal: boolean;
+  candidates?: DetectedCandidate[];
+  selectedCandidateId?: string | null;
+  onSelectCandidate?: (candidateId: string) => void;
   onRequestEnhancedScan: () => void;
   onConfirmEnhancedScan: () => void;
   onDismissConsentModal: () => void;
@@ -19,6 +23,9 @@ export const EnhancedDetectionBar: React.FC<EnhancedDetectionBarProps> = ({
   isEnhancedScanning,
   detectionStatus,
   showConsentModal,
+  candidates = [],
+  selectedCandidateId = null,
+  onSelectCandidate,
   onRequestEnhancedScan,
   onConfirmEnhancedScan,
   onDismissConsentModal,
@@ -51,6 +58,11 @@ export const EnhancedDetectionBar: React.FC<EnhancedDetectionBarProps> = ({
               <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
               <span>{detectionStatus.message}</span>
             </div>
+          ) : detectionStatus?.type === 'abstain' ? (
+            <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+              <AlertCircle className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span className="truncate">{detectionStatus.message}</span>
+            </div>
           ) : detectionStatus?.type === 'local' ? (
             <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
               <Sparkles className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
@@ -75,6 +87,50 @@ export const EnhancedDetectionBar: React.FC<EnhancedDetectionBarProps> = ({
           </button>
         )}
       </div>
+
+      {/* Multi-Candidate Selection Chips: When multiple objects are detected in the image */}
+      {!isLocalScanning && candidates.length > 1 && (
+        <div className="p-3 rounded-2xl bg-indigo-50/70 dark:bg-slate-800/80 border border-indigo-100 dark:border-indigo-900/60 space-y-2 animate-in fade-in duration-200">
+          <div className="flex items-center justify-between text-[11px] text-slate-600 dark:text-slate-300 font-semibold">
+            <span className="flex items-center gap-1.5">
+              <Layers className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+              Multiple items detected — choose the item to report:
+            </span>
+            <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-normal">
+              {candidates.length} candidates
+            </span>
+          </div>
+
+          <div className="flex flex-wrap gap-1.5">
+            {candidates.map((cand) => {
+              const isSelected = cand.id === selectedCandidateId;
+              return (
+                <button
+                  key={cand.id}
+                  type="button"
+                  onClick={() => onSelectCandidate && onSelectCandidate(cand.id)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                    isSelected
+                      ? 'bg-indigo-600 text-white shadow-xs font-semibold ring-2 ring-indigo-400/50'
+                      : 'bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600 hover:border-indigo-300 dark:hover:border-indigo-600 hover:bg-indigo-50/50'
+                  }`}
+                >
+                  <span>{cand.normalizedLabel}</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded-md ${
+                      isSelected
+                        ? 'bg-white/20 text-white'
+                        : 'bg-slate-100 dark:bg-slate-600 text-slate-500 dark:text-slate-300'
+                    }`}
+                  >
+                    {cand.categoryName}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Privacy Disclosure & Consent Dialog */}
       {showConsentModal && (

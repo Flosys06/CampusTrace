@@ -93,6 +93,16 @@ def seed_common_accounts():
                 "role": UserRole.COLLEGE_ADMIN,
                 "department": "Principal & Head of Institution",
                 "college_id": kssem.id if kssem else default_college_id
+            },
+            # RVCE Institutional Admin
+            {
+                "institutional_id": "ADM-RVCE-001",
+                "full_name": "RVCE Campus Administrator",
+                "email": "admin@rvce.edu.in",
+                "password": "RVCEAdmin@2026",
+                "role": UserRole.COLLEGE_ADMIN,
+                "department": "Administrative Office",
+                "college_id": rvce.id if rvce else default_college_id
             }
         ]
 

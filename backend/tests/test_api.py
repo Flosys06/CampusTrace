@@ -507,6 +507,8 @@ def test_visual_feature_extraction_and_gating():
     from app.models.item import Item, ItemImage
 
     # Create two synthesized images for rigorous mathematical verification
+    import os
+    os.makedirs("uploads", exist_ok=True)
     img_a = np.zeros((300, 300, 3), dtype=np.uint8)
     cv2.circle(img_a, (150, 150), 80, (0, 0, 255), -1) # Red circle on black
     cv2.imwrite("uploads/test_synth_a.jpg", img_a)

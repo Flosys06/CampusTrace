@@ -267,7 +267,7 @@ export class YoloDetector {
       }
       if (!isOverlap) {
         nmsResults.push(cand);
-        if (nmsResults.length >= 6) break; // Maximum 6 top items
+        if (nmsResults.length >= 12) break; // Retain up to 12 candidates
       }
     }
 
